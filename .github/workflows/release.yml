@@ -3,7 +3,7 @@ name: Auto Release
 on:
   push:
     tags:
-      - 'v*' # Triggered whenever you push a tag starting with 'v' (e.g., v1.0.6)
+      - 'v*'
 
 jobs:
   build-and-release:

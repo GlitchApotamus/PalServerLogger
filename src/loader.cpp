@@ -2,6 +2,8 @@
 #include <string>
 #include <fstream>
 #include <filesystem>
+#include <sstream>
+#include <vector>
 #include <nlohmann/json.hpp>
 
 using json = nlohmann::json;
@@ -16,6 +18,9 @@ using json = nlohmann::json;
 #pragma comment(linker, "/export:D3DPERF_SetOptions=c:\\windows\\system32\\d3d9.D3DPERF_SetOptions")
 #pragma comment(linker, "/export:D3DPERF_SetRegion=c:\\windows\\system32\\d3d9.D3DPERF_SetRegion")
 
+// Global configuration object to hold translations at runtime
+json g_config;
+
 std::filesystem::path GetModuleDirectory()
 {
     char path[MAX_PATH];
@@ -24,6 +29,34 @@ std::filesystem::path GetModuleDirectory()
                        (LPCSTR)&GetModuleDirectory, &hModule);
     GetModuleFileNameA(hModule, path, sizeof(path));
     return std::filesystem::path(path).parent_path();
+}
+
+// Simple string formatting helper for translations (replaces {0}, {1}, etc.)
+std::string FormatString(const std::string &fmt, const std::vector<std::string> &args)
+{
+    std::string result = fmt;
+    for (size_t i = 0; i < args.size(); ++i)
+    {
+        std::string placeholder = "{" + std::to_string(i) + "}";
+        size_t pos = 0;
+        while ((pos = result.find(placeholder, pos)) != std::string::npos)
+        {
+            result.replace(pos, placeholder.length(), args[i]);
+            pos += args[i].length();
+        }
+    }
+    return result;
+}
+
+// Translation Lookup Function with Fallback
+std::string Translate(const std::string &key, const std::string &fallback, const std::vector<std::string> &args = {})
+{
+    if (g_config.contains("translations") && g_config["translations"].contains(key) && g_config["translations"][key].is_string())
+    {
+        std::string customTemplate = g_config["translations"][key].get<std::string>();
+        return FormatString(customTemplate, args);
+    }
+    return FormatString(fallback, args);
 }
 
 // ---------------------------------------------------------
@@ -35,6 +68,7 @@ enum LogLevel
     LOG_SUCCESS,
     LOG_ERROR
 };
+
 void DebugLog(LogLevel level, const std::string &message)
 {
     std::string levelStr;
@@ -64,22 +98,19 @@ void DebugLog(LogLevel level, const std::string &message)
         GetConsoleScreenBufferInfo(hConsole, &consoleInfo);
         WORD saved_attributes = consoleInfo.wAttributes;
 
-        // Construct the full string
         std::string fullLine = "[ModLoader]: [" + levelStr + "] " + message + "\n";
 
-        // Print "[ModLoader]: ["
         WriteFile(hConsole, "[ModLoader]: [", 14, &written, nullptr);
 
-        // Print Colorized Level
         SetConsoleTextAttribute(hConsole, colorAttr);
         WriteFile(hConsole, levelStr.c_str(), (DWORD)levelStr.length(), &written, nullptr);
 
-        // Print "] <message>"
         SetConsoleTextAttribute(hConsole, saved_attributes);
         std::string suffix = "] " + message + "\n";
         WriteFile(hConsole, suffix.c_str(), (DWORD)suffix.length(), &written, nullptr);
     }
 }
+
 // ---------------------------------------------------------
 // Mod Loader Thread
 // ---------------------------------------------------------
@@ -87,80 +118,69 @@ DWORD WINAPI ChainLoadDLLs(LPVOID lpParam)
 {
     Sleep(500);
 
-    DebugLog(LOG_INFO, "Mod thread started.");
-
     std::filesystem::path binDir = GetModuleDirectory();
     std::filesystem::path configPath = binDir / "d3d9_config.json";
-
-    // Step up three directories (Win64 -> Binaries -> Pal -> PalServer) to find the root
     std::filesystem::path serverRoot = binDir.parent_path().parent_path().parent_path();
 
-    // Auto-Generate config
+    // 1. Auto-Generate config with default translations if missing
     if (!std::filesystem::exists(configPath))
     {
-        DebugLog(LOG_INFO, "Config missing. Generating default d3d9_config.json...");
+        // Setup default config structure including translations map
+        g_config = {
+            {"load_dlls", json::array({"PalServerLogger.dll"})},
+            {"translations", {{"ModThreadStarted", "Mod thread started."}, {"ConfigMissing", "Config missing. Generating default d3d9_config.json..."}, {"DefaultConfigCreated", "Default config created."}, {"AttemptingLoad", "Attempting to load: {0}"}, {"InjectedSuccess", "Injected {0}"}, {"InjectedFailed", "Failed to inject {0}. Windows Error Code: {1}"}, {"ConfigErrorMissingArray", "JSON does not contain 'load_dlls' array."}, {"ConfigErrorOpening", "Could not open config at: {0}"}}}};
 
         std::ofstream defaultConfig(configPath);
         if (defaultConfig.is_open())
         {
-            json defaultJson = {
-                {"load_dlls", json::array({"PalServerLogger.dll"})}};
-            defaultConfig << defaultJson.dump(4);
+            defaultConfig << g_config.dump(4);
             defaultConfig.close();
-
-            DebugLog(LOG_SUCCESS, "Default config created.");
-        }
-        else
-        {
-            DebugLog(LOG_ERROR, "Failed to create default config file.");
-            return 1;
         }
     }
-
-    std::ifstream configFile(configPath);
-    if (!configFile.is_open())
+    else
     {
-        DebugLog(LOG_ERROR, "Could not open config at: " + configPath.string());
-        return 1;
-    }
-
-    json config;
-    try
-    {
-        configFile >> config;
-
-        if (config.contains("load_dlls") && config["load_dlls"].is_array())
+        // Load existing config
+        std::ifstream configFile(configPath);
+        if (configFile.is_open())
         {
-            for (const auto &mod : config["load_dlls"])
+            try
             {
-                std::string modFilename = mod.get<std::string>();
-                std::filesystem::path modPath = binDir / modFilename;
-
-                // Format the string relative to the server root for clean logging
-                std::string displayPath = std::filesystem::relative(modPath, serverRoot).string();
-
-                DebugLog(LOG_INFO, "Attempting to load: " + displayPath);
-
-                // Still use the absolute path for the actual memory injection to prevent working directory bugs
-                HMODULE hMod = LoadLibraryA(modPath.string().c_str());
-                if (hMod)
-                {
-                    DebugLog(LOG_SUCCESS, "Injected " + modFilename);
-                }
-                else
-                {
-                    DebugLog(LOG_ERROR, "Failed to inject " + modFilename + ". Windows Error Code: " + std::to_string(GetLastError()));
-                }
+                configFile >> g_config;
+            }
+            catch (const json::parse_error &e)
+            {
+                DebugLog(LOG_ERROR, std::string("JSON Formatting Error - ") + e.what());
             }
         }
-        else
+    }
+
+    DebugLog(LOG_INFO, Translate("ModThreadStarted", "Mod thread started."));
+
+    if (g_config.contains("load_dlls") && g_config["load_dlls"].is_array())
+    {
+        for (const auto &mod : g_config["load_dlls"])
         {
-            DebugLog(LOG_ERROR, "JSON does not contain 'load_dlls' array.");
+            std::string modFilename = mod.get<std::string>();
+            std::filesystem::path modPath = binDir / modFilename;
+            std::string displayPath = std::filesystem::relative(modPath, serverRoot).string();
+
+            DebugLog(LOG_INFO, Translate("AttemptingLoad", "Attempting to load: {0}", {displayPath}));
+
+            HMODULE hMod = LoadLibraryA(modPath.string().c_str());
+            if (hMod)
+            {
+                DebugLog(LOG_SUCCESS, Translate("InjectedSuccess", "Injected {0}", {modFilename}));
+            }
+            else
+            {
+                std::string errCode = std::to_string(GetLastError());
+                DebugLog(LOG_ERROR, Translate("InjectedFailed", "Failed to inject {0}. Windows Error Code: {1}", {modFilename, errCode}));
+            }
         }
     }
-    catch (const json::parse_error &e)
+    else
     {
-        DebugLog(LOG_ERROR, std::string("JSON Formatting Error - ") + e.what());
+        DebugLog(LOG_ERROR, Translate("ConfigErrorMissingArray", "JSON does not contain 'load_dlls' array."));
     }
 
     return 0;
@@ -171,7 +191,6 @@ BOOL APIENTRY DllMain(HMODULE hModule, DWORD ul_reason_for_call, LPVOID lpReserv
     if (ul_reason_for_call == DLL_PROCESS_ATTACH)
     {
         DisableThreadLibraryCalls(hModule);
-
         CreateThread(nullptr, 0, ChainLoadDLLs, nullptr, 0, nullptr);
     }
     return TRUE;

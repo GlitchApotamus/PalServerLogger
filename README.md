@@ -1,16 +1,59 @@
+# PalServerLogger
+
+[![GitHub repository](https://img.shields.io/badge/GitHub-GlitchApotamus%2FPalServerLogger-blue?style=flat-square&logo=github)](https://github.com/GlitchApotamus/PalServerLogger)
+[![GitHub version](https://img.shields.io/badge/version-auto--incrementing-blue?style=flat-square)](https://github.com/GlitchApotamus/PalServerLogger/releases)
+
 # Description
 Because the native Palworld server discards log data upon exit, traditional logging methods often fail to capture the complete lifecycle of the server. This logger solves that by running a highly optimized dual-hook architecture that intercepts both the initial boot sequence and the Unreal Engine core logging system, outputting it cleanly to a session-based file.
 
 # Installation instructions
 Download, extract and drop both files into \Pal\Binaries\Win64.
-The d3d9 is highly universal. If you already have PalDefender installed on the server, just drop PalworldLogger.dll into the same folder and add "PalServerLogger.dll" to the d3d9_config.json.
+> **Important Note for PalDefender Users:** 
+> If you are using PalDefender, you must switch to using our `d3d9.dll` proxy loader as your primary injection point to take advantage of the new localization and translation features. You won't lose PalDefender functionality—simply add `"PalDefender.dll"` to your `load_dlls` array inside the newly generated `d3d9_config.json` alongside your other mods!
+
 Restart the server and you will see a new folder "PalServerLogs" where you will find timestamped log files. A new one is generated every time your restart the server.
 
+# Configuration & Translations
+On first boot, the mod loader automatically generates a `d3d9_config.json` file in your binaries directory. This file controls which DLLs are loaded and handles text localization.
+
+### How to Update or Customize Translations
+If you want to translate the mod loader output into another language or modify the existing messages, open `d3d9_config.json` and locate the `"translations"` object block:
+
+```json
+{
+    "load_dlls": [
+        "PalServerLogger.dll"
+    ],
+    "translations": {
+        "ModThreadStarted": "Mod thread started.",
+        "ConfigMissing": "Config missing. Generating default d3d9_config.json...",
+        "DefaultConfigCreated": "Default config created.",
+        "AttemptingLoad": "Attempting to load: {0}",
+        "InjectedSuccess": "Injected {0}",
+        "InjectedFailed": "Failed to inject {0}. Windows Error Code: {1}",
+        "ConfigErrorMissingArray": "JSON does not contain 'load_dlls' array.",
+        "ConfigErrorOpening": "Could not open config at: {0}"
+    }
+}
+
+```
+
+* **Customizing Text:** Simply edit the string value to the right of any key.
+* **Dynamic Placeholders:** Keep tokens like `{0}` and `{1}` intact inside your custom strings, as they are dynamically replaced with runtime data (such as filenames or error codes).
+* **Fallbacks:** If a key is missing or removed from your config file, the loader will automatically fall back to its built-in default strings safely.
+
 # Main features
+
 * **Zero-Config Injection:** Uses a professional DLL Proxy (`d3d9.dll`) to auto-load mods when the server starts.
 * **Auto-Discovery:** Automatically generates configuration files on first boot if they are missing.
+* **Localization Support:** Fully configurable input/output translation mapping via `d3d9_config.json` for custom languages and text strings.
 * **Streamlined Logging:** Includes real-time, color-coded console feedback, allowing you to monitor mod status directly from the server terminal.
 * **Stable Architecture:** Built with thread-safe injection to prevent server crashes and boot-time deadlocks.
 
 # Requirements
+
 Currently only support windows based servers. Linux is planned but may be a while. This mod does not require UE4SS, only the d3d9.dll that's shipped with it.
+
+# Source Code
+
+Find the latest updates, releases, and source code on GitHub: [GlitchApotamus/PalServerLogger](https://github.com/GlitchApotamus/PalServerLogger)

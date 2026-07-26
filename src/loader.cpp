@@ -90,6 +90,9 @@ void DebugLog(LogLevel level, const std::string &message)
         break;
     }
 
+    // Fetch translated prefix dynamically (defaults to "ModLoader" if missing)
+    std::string prefix = Translate("ModLoaderPrefix", "ModLoader");
+
     HANDLE hConsole = GetStdHandle(STD_OUTPUT_HANDLE);
     if (hConsole && hConsole != INVALID_HANDLE_VALUE)
     {
@@ -98,9 +101,10 @@ void DebugLog(LogLevel level, const std::string &message)
         GetConsoleScreenBufferInfo(hConsole, &consoleInfo);
         WORD saved_attributes = consoleInfo.wAttributes;
 
-        std::string fullLine = "[ModLoader]: [" + levelStr + "] " + message + "\n";
+        std::string bracketPrefix = "[" + prefix + "]: [";
+        std::string fullLine = bracketPrefix + levelStr + "] " + message + "\n";
 
-        WriteFile(hConsole, "[ModLoader]: [", 14, &written, nullptr);
+        WriteFile(hConsole, bracketPrefix.c_str(), (DWORD)bracketPrefix.length(), &written, nullptr);
 
         SetConsoleTextAttribute(hConsole, colorAttr);
         WriteFile(hConsole, levelStr.c_str(), (DWORD)levelStr.length(), &written, nullptr);
@@ -128,7 +132,7 @@ DWORD WINAPI ChainLoadDLLs(LPVOID lpParam)
         // Setup default config structure including translations map
         g_config = {
             {"load_dlls", json::array({"PalServerLogger.dll"})},
-            {"translations", {{"ModThreadStarted", "Mod thread started."}, {"ConfigMissing", "Config missing. Generating default d3d9_config.json..."}, {"DefaultConfigCreated", "Default config created."}, {"AttemptingLoad", "Attempting to load: {0}"}, {"InjectedSuccess", "Injected {0}"}, {"InjectedFailed", "Failed to inject {0}. Windows Error Code: {1}"}, {"ConfigErrorMissingArray", "JSON does not contain 'load_dlls' array."}, {"ConfigErrorOpening", "Could not open config at: {0}"}}}};
+            {"translations", {{"ModLoaderPrefix", "ModLoader"}, {"ModThreadStarted", "Mod thread started."}, {"ConfigMissing", "Config missing. Generating default d3d9_config.json..."}, {"DefaultConfigCreated", "Default config created."}, {"AttemptingLoad", "Attempting to load: {0}"}, {"InjectedSuccess", "Injected {0}"}, {"InjectedFailed", "Failed to inject {0}. Windows Error Code: {1}"}, {"ConfigErrorMissingArray", "JSON does not contain 'load_dlls' array."}, {"ConfigErrorOpening", "Could not open config at: {0}"}}}};
 
         std::ofstream defaultConfig(configPath);
         if (defaultConfig.is_open())

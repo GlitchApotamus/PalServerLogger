@@ -2,6 +2,7 @@
 
 [![GitHub repository](https://img.shields.io/badge/GitHub-GlitchApotamus%2FPalServerLogger-blue?style=flat-square&logo=github)](https://github.com/GlitchApotamus/PalServerLogger)
 [![GitHub Release](https://img.shields.io/github/v/release/GlitchApotamus/PalServerLogger?style=flat-square)](https://github.com/GlitchApotamus/PalServerLogger/releases)
+[![.github/workflows/release.yml](https://github.com/GlitchApotamus/PalServerLogger/actions/workflows/release.yml/badge.svg)](https://github.com/GlitchApotamus/PalServerLogger/actions/workflows/release.yml)
 
 # Description
 Because the native Palworld server discards log data upon exit, traditional logging methods often fail to capture the complete lifecycle of the server. This logger solves that by running a highly optimized dual-hook architecture that intercepts both the initial boot sequence and the Unreal Engine core logging system, outputting it cleanly to a session-based file.

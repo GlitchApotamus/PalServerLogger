@@ -1,0 +1,29 @@
+name: Auto Release
+
+on:
+  push:
+    tags:
+      - 'v*' # Triggered whenever you push a tag starting with 'v' (e.g., v1.0.6)
+
+jobs:
+  build-and-release:
+    runs-on: windows-latest
+
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Configure CMake
+        run: cmake -B build -S .
+
+      - name: Build Release
+        run: cmake --build build --config Release
+
+      - name: Upload Release Asset
+        uses: softprops/action-gh-release@v2
+        with:
+          files: build/Release/PalServerLogger-*.zip
+          generate_release_notes: true

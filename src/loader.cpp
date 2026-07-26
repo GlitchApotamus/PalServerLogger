@@ -172,9 +172,6 @@ BOOL APIENTRY DllMain(HMODULE hModule, DWORD ul_reason_for_call, LPVOID lpReserv
     {
         DisableThreadLibraryCalls(hModule);
 
-        // REMOVED: The manual WriteFile call that was causing the duplicate/garbage text.
-
-        // Create the thread to handle everything else
         CreateThread(nullptr, 0, ChainLoadDLLs, nullptr, 0, nullptr);
     }
     return TRUE;

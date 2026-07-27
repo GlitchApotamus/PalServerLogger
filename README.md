@@ -43,6 +43,23 @@ If you want to translate the mod loader output into another language or modify t
 * **Dynamic Placeholders:** Keep tokens like `{0}` and `{1}` intact inside your custom strings, as they are dynamically replaced with runtime data (such as filenames or error codes).
 * **Fallbacks:** If a key is missing or removed from your config file, the loader will automatically fall back to its built-in default strings safely.
 
+## Mod Configuration File
+
+On first boot, the mod automatically generates a logger_config.json file inside your PalServerLogs/config/ directory. You can edit this file to adjust file retention limits and customize timestamp outputs.
+
+### Available Settings:
+* `max_log_files` (Integer, Default: 5): <br>
+Defines the maximum number of historical session log files to retain before automatically cleaning up and deleting the oldest log files on startup.
+* `timestamp_format` (String, Default: "%Y-%m-%d %H:%M:%S"):<br>
+Customizes the timestamp format prepended to every logged line using standard C++ `strftime` format specifiers.
+<br><br>
+```json
+{
+    "max_log_files": 5,
+    "timestamp_format": "%Y-%m-%d %H:%M:%S"
+}
+```
+
 # Main features
 
 * **Zero-Config Injection:** Uses a professional DLL Proxy (`d3d9.dll`) to auto-load mods when the server starts.

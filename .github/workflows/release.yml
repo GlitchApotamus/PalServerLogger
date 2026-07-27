@@ -2,8 +2,7 @@ name: Auto Release
 
 on:
   push:
-    tags:
-      - 'v*'
+    branches: [ main ]
 
 jobs:
   build-and-release:
@@ -27,6 +26,6 @@ jobs:
         with:
           files: |
             build/Release/PalServerLogger-*.zip
-            d3d9_config.json
-            PalServerLogger.dll
+            build/Release/d3d9_config.json
+            build/Release/PalServerLogger.dll
           generate_release_notes: true

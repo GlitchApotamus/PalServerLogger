@@ -4,6 +4,7 @@
 #include <filesystem>
 #include <sstream>
 #include <vector>
+#include <functional>
 #include <nlohmann/json.hpp>
 
 using json = nlohmann::json;
@@ -126,20 +127,65 @@ DWORD WINAPI ChainLoadDLLs(LPVOID lpParam)
     std::filesystem::path configPath = binDir / "d3d9_config.json";
     std::filesystem::path serverRoot = binDir.parent_path().parent_path().parent_path();
 
+    const json defaultConfig = {
+        {"load_dlls", json::array({"PalServerLogger.dll"})},
+        {"UsePalDefender", false},
+        {"translations", {{"ModLoaderPrefix", "ModLoader"}, {"ModThreadStarted", "Mod thread started."}, {"ConfigMissing", "Config missing. Generating default d3d9_config.json..."}, {"DefaultConfigCreated", "Default config created."}, {"AttemptingLoad", "Attempting to load: {0}"}, {"InjectedSuccess", "Injected {0}"}, {"InjectedFailed", "Failed to inject {0}. Windows Error Code: {1}"}, {"ConfigErrorMissingArray", "JSON does not contain 'load_dlls' array."}, {"ConfigErrorOpening", "Could not open config at: {0}"}}}};
+
+    auto writeConfig = [&]()
+    {
+        std::ofstream outFile(configPath);
+        if (outFile.is_open())
+        {
+            outFile << g_config.dump(4);
+            outFile.close();
+        }
+    };
+
+    // Recursively restore missing keys from defaults while preserving user overrides.
+    std::function<bool(json &, const json &)> mergeMissingKeys =
+        [&](json &target, const json &defaults) -> bool
+    {
+        bool changed = false;
+        if (!defaults.is_object())
+        {
+            return false;
+        }
+
+        if (!target.is_object())
+        {
+            target = defaults;
+            return true;
+        }
+
+        for (auto it = defaults.begin(); it != defaults.end(); ++it)
+        {
+            const std::string &key = it.key();
+            const json &defaultValue = it.value();
+
+            if (!target.contains(key))
+            {
+                target[key] = defaultValue;
+                changed = true;
+                continue;
+            }
+
+            if (defaultValue.is_object())
+            {
+                changed = mergeMissingKeys(target[key], defaultValue) || changed;
+            }
+        }
+
+        return changed;
+    };
+
+    bool configUpdated = false;
+
     // 1. Auto-Generate config with default translations if missing
     if (!std::filesystem::exists(configPath))
     {
-        // Setup default config structure including translations map
-        g_config = {
-            {"load_dlls", json::array({"PalServerLogger.dll"})},
-            {"translations", {{"ModLoaderPrefix", "ModLoader"}, {"ModThreadStarted", "Mod thread started."}, {"ConfigMissing", "Config missing. Generating default d3d9_config.json..."}, {"DefaultConfigCreated", "Default config created."}, {"AttemptingLoad", "Attempting to load: {0}"}, {"InjectedSuccess", "Injected {0}"}, {"InjectedFailed", "Failed to inject {0}. Windows Error Code: {1}"}, {"ConfigErrorMissingArray", "JSON does not contain 'load_dlls' array."}, {"ConfigErrorOpening", "Could not open config at: {0}"}}}};
-
-        std::ofstream defaultConfig(configPath);
-        if (defaultConfig.is_open())
-        {
-            defaultConfig << g_config.dump(4);
-            defaultConfig.close();
-        }
+        g_config = defaultConfig;
+        writeConfig();
     }
     else
     {
@@ -154,11 +200,56 @@ DWORD WINAPI ChainLoadDLLs(LPVOID lpParam)
             catch (const json::parse_error &e)
             {
                 DebugLog(LOG_ERROR, std::string("JSON Formatting Error - ") + e.what());
+                g_config = defaultConfig;
+                configUpdated = true;
             }
         }
+
+        configUpdated = mergeMissingKeys(g_config, defaultConfig) || configUpdated;
     }
 
     DebugLog(LOG_INFO, Translate("ModThreadStarted", "Mod thread started."));
+
+    if (!g_config.contains("load_dlls") || !g_config["load_dlls"].is_array())
+    {
+        g_config["load_dlls"] = json::array();
+        configUpdated = true;
+    }
+
+    const bool usePalDefender = g_config.value("UsePalDefender", false);
+    bool hasPalDefender = false;
+    for (const auto &mod : g_config["load_dlls"])
+    {
+        if (mod.is_string() && mod.get<std::string>() == "PalDefender.dll")
+        {
+            hasPalDefender = true;
+            break;
+        }
+    }
+
+    if (usePalDefender && !hasPalDefender)
+    {
+        g_config["load_dlls"].push_back("PalDefender.dll");
+        configUpdated = true;
+    }
+    else if (!usePalDefender && hasPalDefender)
+    {
+        json filteredLoadDlls = json::array();
+        for (const auto &mod : g_config["load_dlls"])
+        {
+            if (!(mod.is_string() && mod.get<std::string>() == "PalDefender.dll"))
+            {
+                filteredLoadDlls.push_back(mod);
+            }
+        }
+        g_config["load_dlls"] = filteredLoadDlls;
+        configUpdated = true;
+    }
+
+    if (configUpdated)
+    {
+        writeConfig();
+    }
 
     if (g_config.contains("load_dlls") && g_config["load_dlls"].is_array())
     {

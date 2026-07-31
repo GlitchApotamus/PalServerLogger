@@ -14,6 +14,63 @@ jobs:
     steps:
       - name: Checkout Repository
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Compute Release Tag
+        shell: pwsh
+        run: |
+          $version = (Get-Content version.txt -Raw).Trim()
+          if (-not $version) {
+            throw "version.txt is empty or missing."
+          }
+
+          $baseTag = "v1.$version"
+          $tag = $baseTag
+          if (git rev-parse $baseTag 2>$null) {
+            $tag = "$baseTag-build$env:GITHUB_RUN_NUMBER"
+          }
+
+          "RELEASE_TAG=$tag" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+
+      - name: Create and Push Git Tag
+        shell: pwsh
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git tag "$env:RELEASE_TAG"
+          git push origin "$env:RELEASE_TAG"
+
+      - name: Generate Changelog
+        shell: pwsh
+        run: |
+          $allTags = @(git tag --sort=-creatordate)
+          $previousTag = $allTags | Where-Object { $_ -ne $env:RELEASE_TAG } | Select-Object -First 1
+
+          if ($previousTag) {
+            $sectionHeader = "## Changes since $previousTag"
+            $entries = git log "$previousTag..HEAD" --pretty=format:"- %s (%h)"
+          } else {
+            $sectionHeader = "## Initial release changes"
+            $entries = git log HEAD --pretty=format:"- %s (%h)"
+          }
+
+          if (-not $entries) {
+            $entries = "- No code changes recorded."
+          }
+
+          $generatedAt = (Get-Date).ToUniversalTime().ToString("yyyy-MM-dd HH:mm:ss 'UTC'")
+          $changelog = @"
+          # Changelog
+
+          ## Release $env:RELEASE_TAG
+          Generated: $generatedAt
+
+          $sectionHeader
+          $entries
+          "@
+
+          Set-Content -Path CHANGELOG.md -Value $changelog -Encoding utf8
 
       - name: Configure CMake
         run: cmake -B build -S .
@@ -24,8 +81,10 @@ jobs:
       - name: Upload Release Asset
         uses: softprops/action-gh-release@v2
         with:
+          tag_name: ${{ env.RELEASE_TAG }}
+          body_path: CHANGELOG.md
           files: |
             build/Release/PalServerLogger-*.zip
             build/Release/d3d9_config.json
             build/Release/PalServerLogger.dll
-          generate_release_notes: true
+            CHANGELOG.md

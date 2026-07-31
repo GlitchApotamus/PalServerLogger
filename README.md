@@ -10,7 +10,7 @@ Because the native Palworld server discards log data upon exit, traditional logg
 # Installation instructions
 Download, extract and drop both files into \Pal\Binaries\Win64.
 > **Important Note for PalDefender Users:** 
-> If you are using PalDefender, you must switch to using our `d3d9.dll` proxy loader as your primary injection point to take advantage of the new localization and translation features. You won't lose PalDefender functionality—simply add `"PalDefender.dll"` to your `load_dlls` array inside the newly generated `d3d9_config.json` alongside your other mods!
+> If you are using PalDefender, you must switch to using our `d3d9.dll` proxy loader as your primary injection point to take advantage of the new localization and translation features. You won't lose PalDefender functionality — Simply set `UsePalDefender` to `true` or add `"PalDefender.dll"` to your `load_dlls` array inside the newly generated `d3d9_config.json` alongside your other mods! By default, `UsePalDefender` is set to `false` to prevent errors on startup.
 
 Restart the server and you will see a new folder "PalServerLogs" where you will find timestamped log files. A new one is generated every time your restart the server.
 
@@ -25,6 +25,7 @@ If you want to translate the mod loader output into another language or modify t
     "load_dlls": [
         "PalServerLogger.dll"
     ],
+    "UsePalDefender": false,
     "translations": {
         "ModThreadStarted": "Mod thread started.",
         "ConfigMissing": "Config missing. Generating default d3d9_config.json...",

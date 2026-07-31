@@ -13,7 +13,7 @@ jobs:
 
     steps:
       - name: Checkout Repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           fetch-depth: 0
 
@@ -27,7 +27,8 @@ jobs:
 
           $baseTag = "v1.$version"
           $tag = $baseTag
-          if (git rev-parse $baseTag 2>$null) {
+          $tagExists = [bool](git tag -l "$baseTag")
+          if ($tagExists) {
             $tag = "$baseTag-build$env:GITHUB_RUN_NUMBER"
           }
 
@@ -60,17 +61,17 @@ jobs:
           }
 
           $generatedAt = (Get-Date).ToUniversalTime().ToString("yyyy-MM-dd HH:mm:ss 'UTC'")
-          $changelog = @"
-          # Changelog
+          $changelogLines = @(
+            "# Changelog"
+            ""
+            "## Release $env:RELEASE_TAG"
+            "Generated: $generatedAt"
+            ""
+            "$sectionHeader"
+            "$entries"
+          )
 
-          ## Release $env:RELEASE_TAG
-          Generated: $generatedAt
-
-          $sectionHeader
-          $entries
-          "@
-
-          Set-Content -Path CHANGELOG.md -Value $changelog -Encoding utf8
+          Set-Content -Path CHANGELOG.md -Value ($changelogLines -join "`n") -Encoding utf8
 
       - name: Configure CMake
         run: cmake -B build -S .

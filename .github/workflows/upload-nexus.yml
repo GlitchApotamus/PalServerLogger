@@ -1,0 +1,174 @@
+name: Upload Mod To Nexus
+
+on:
+  workflow_dispatch:
+    inputs:
+      zip_path:
+        description: "Zip path or glob pattern to upload"
+        required: false
+        default: "build/Release/PalServerLogger-*.zip"
+      file_name:
+        description: "Nexus mod file display name"
+        required: false
+        default: "PalServerLogger"
+      file_version:
+        description: "Nexus mod file version (defaults to version.txt if empty)"
+        required: false
+        default: ""
+      file_category:
+        description: "Nexus file category"
+        required: false
+        default: "main"
+
+jobs:
+  upload-to-nexus:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    env:
+      NEXUS_API_BASE: https://api.nexusmods.com/v3
+      NEXUS_MOD_ID: "7719219"
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v5
+
+      - name: Upload Zip To Nexus
+        shell: pwsh
+        env:
+          NEXUS_API_TOKEN: ${{ secrets.NEXUS_API_TOKEN }}
+          ZIP_PATH: ${{ github.event.inputs.zip_path }}
+          FILE_NAME: ${{ github.event.inputs.file_name }}
+          FILE_VERSION_INPUT: ${{ github.event.inputs.file_version }}
+          FILE_CATEGORY: ${{ github.event.inputs.file_category }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+
+          if (-not $env:NEXUS_API_TOKEN) {
+            throw "NEXUS_API_TOKEN is not set."
+          }
+
+          # Resolve either an exact file path or a glob pattern to the newest matching zip.
+          $zipCandidates = @()
+          if (Test-Path -LiteralPath $env:ZIP_PATH) {
+            $resolved = Get-Item -LiteralPath $env:ZIP_PATH
+            if ($resolved.PSIsContainer) {
+              $zipCandidates = Get-ChildItem -Path $resolved.FullName -Filter '*.zip' -File
+            } else {
+              $zipCandidates = @($resolved)
+            }
+          } else {
+            $zipCandidates = Get-ChildItem -Path $env:ZIP_PATH -File -ErrorAction SilentlyContinue
+          }
+
+          if (-not $zipCandidates -or $zipCandidates.Count -eq 0) {
+            throw "No zip file found for ZIP_PATH: $env:ZIP_PATH"
+          }
+
+          $zipFile = $zipCandidates | Sort-Object LastWriteTime -Descending | Select-Object -First 1
+          Write-Host "Using zip file: $($zipFile.FullName)"
+          $zipName = $zipFile.Name
+          $zipSize = [int64]$zipFile.Length
+
+          $fileVersion = $env:FILE_VERSION_INPUT
+          if ([string]::IsNullOrWhiteSpace($fileVersion)) {
+            if (Test-Path -LiteralPath "version.txt") {
+              $v = (Get-Content -LiteralPath "version.txt" -Raw).Trim()
+              if (-not [string]::IsNullOrWhiteSpace($v)) {
+                $fileVersion = "1.$v"
+              }
+            }
+          }
+
+          if ([string]::IsNullOrWhiteSpace($fileVersion)) {
+            throw "Could not determine file version. Provide workflow input file_version or set version.txt."
+          }
+
+          $headers = @{
+            "apikey" = $env:NEXUS_API_TOKEN
+            "Content-Type" = "application/json"
+          }
+
+          Write-Host "Creating upload session for $zipName ($zipSize bytes)..."
+          $createUploadBody = @{
+            size_bytes = $zipSize
+            filename = $zipName
+          } | ConvertTo-Json
+
+          $createUploadResp = Invoke-RestMethod `
+            -Method POST `
+            -Uri "$env:NEXUS_API_BASE/uploads" `
+            -Headers $headers `
+            -Body $createUploadBody
+
+          $uploadId = $createUploadResp.data.id
+          $presignedUrl = $createUploadResp.data.presigned_url
+
+          if ([string]::IsNullOrWhiteSpace($uploadId) -or [string]::IsNullOrWhiteSpace($presignedUrl)) {
+            throw "Create upload response missing id or presigned_url."
+          }
+
+          Write-Host "Uploading zip data to presigned URL..."
+          $uploadHeaders = @{
+            "Content-Disposition" = "attachment; filename=`"$zipName`""
+            "Content-Type" = "application/octet-stream"
+          }
+
+          Invoke-RestMethod `
+            -Method PUT `
+            -Uri $presignedUrl `
+            -Headers $uploadHeaders `
+            -InFile $zipFile.FullName
+
+          Write-Host "Finalising upload session $uploadId..."
+          Invoke-RestMethod `
+            -Method POST `
+            -Uri "$env:NEXUS_API_BASE/uploads/$uploadId/finalise" `
+            -Headers @{ "apikey" = $env:NEXUS_API_TOKEN }
+
+          $maxAttempts = 30
+          $delaySeconds = 5
+          $isAvailable = $false
+
+          for ($i = 1; $i -le $maxAttempts; $i++) {
+            $statusResp = Invoke-RestMethod `
+              -Method GET `
+              -Uri "$env:NEXUS_API_BASE/uploads/$uploadId" `
+              -Headers @{ "apikey" = $env:NEXUS_API_TOKEN }
+
+            $state = $statusResp.data.state
+            Write-Host "Upload state attempt $i/$maxAttempts: $state"
+
+            if ($state -eq "available") {
+              $isAvailable = $true
+              break
+            }
+
+            Start-Sleep -Seconds $delaySeconds
+          }
+
+          if (-not $isAvailable) {
+            throw "Upload did not become available in time."
+          }
+
+          $createModFileBody = @{
+            upload_id = $uploadId
+            mod_id = $env:NEXUS_MOD_ID
+            name = $env:FILE_NAME
+            version = $fileVersion
+            file_category = $env:FILE_CATEGORY
+            allow_mod_manager_download = $false
+            primary_mod_manager_download = $true
+            update_mod_version = $true
+          } | ConvertTo-Json
+
+          Write-Host "Creating mod file on Nexus (mod_id=$env:NEXUS_MOD_ID)..."
+          $createModFileResp = Invoke-RestMethod `
+            -Method POST `
+            -Uri "$env:NEXUS_API_BASE/mod-files" `
+            -Headers $headers `
+            -Body $createModFileBody
+
+          $createdFileId = $createModFileResp.data.id
+          $createdFileScopedId = $createModFileResp.data.game_scoped_id
+          Write-Host "Created Nexus mod file id=$createdFileId game_scoped_id=$createdFileScopedId"

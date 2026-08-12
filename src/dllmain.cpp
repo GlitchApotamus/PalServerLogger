@@ -24,6 +24,7 @@ tWriteFile pOriginalWriteFile = nullptr;
 std::string g_LogFilePath = "";
 int g_MaxLogs = 5;
 std::string g_TimestampFormat = "%Y-%m-%d %H:%M:%S";
+std::string g_FileTimestampFormat = "%Y%m%d_%H%M%S";
 
 // Thread-safe async file queue to prevent freezing the game/console threads
 std::queue<std::string> g_LogQueue;
@@ -40,6 +41,19 @@ std::string GetFormattedTimestamp()
     std::ostringstream oss;
     oss << std::put_time(&timeinfo, g_TimestampFormat.c_str());
     return oss.str();
+}
+
+std::string SanitizeFilenameComponent(std::string value)
+{
+    static const std::string invalidChars = "<>:\"/\\|?*";
+    for (char &ch : value)
+    {
+        if (ch < 32 || invalidChars.find(ch) != std::string::npos)
+        {
+            ch = '_';
+        }
+    }
+    return value;
 }
 
 // Instant-write background thread
@@ -147,6 +161,11 @@ void InitializeLogEnvironment()
             g_MaxLogs = config["max_log_files"];
         if (config.contains("timestamp_format"))
             g_TimestampFormat = config["timestamp_format"];
+        // Keep filename format aligned with user timestamp format unless an explicit override exists.
+        if (config.contains("filename_timestamp_format"))
+            g_FileTimestampFormat = config["filename_timestamp_format"];
+        else
+            g_FileTimestampFormat = g_TimestampFormat;
     }
     catch (...)
     {
@@ -156,7 +175,7 @@ void InitializeLogEnvironment()
     std::vector<std::filesystem::directory_entry> logFiles;
     for (const auto &entry : std::filesystem::directory_iterator(logDir))
     {
-        if (entry.is_regular_file() && entry.path().extension() == ".txt")
+        if (entry.is_regular_file() && entry.path().extension() == ".log")
             logFiles.push_back(entry);
     }
 
@@ -177,8 +196,18 @@ void InitializeLogEnvironment()
     struct tm timeinfo;
     localtime_s(&timeinfo, &now_c);
 
+    std::ostringstream timestampStream;
+    timestampStream << std::put_time(&timeinfo, g_FileTimestampFormat.c_str());
+    std::string safeTimestamp = SanitizeFilenameComponent(timestampStream.str());
+    if (safeTimestamp.empty())
+    {
+        std::ostringstream fallback;
+        fallback << std::put_time(&timeinfo, "%Y%m%d_%H%M%S");
+        safeTimestamp = fallback.str();
+    }
+
     std::stringstream ss;
-    ss << "server_log_" << std::put_time(&timeinfo, "%Y%m%d_%H%M%S") << ".txt";
+    ss << "server_log_" << safeTimestamp << ".log";
     g_LogFilePath = (logDir / ss.str()).string();
 
     // Start background asynchronous disk-writer thread

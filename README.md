@@ -51,12 +51,15 @@ On first boot, the mod automatically generates a logger_config.json file inside 
 * `max_log_files` (Integer, Default: 5): <br>
 Defines the maximum number of historical session log files to retain before automatically cleaning up and deleting the oldest log files on startup.
 * `timestamp_format` (String, Default: "%Y-%m-%d %H:%M:%S"):<br>
-Customizes the timestamp format prepended to every logged line using standard C++ `strftime` format specifiers.
+Customizes the timestamp format prepended to every logged line and, by default, also controls the timestamp used in log filenames.
+* `filename_timestamp_format` (String, Optional):<br>
+Overrides only the filename timestamp format if you want line timestamps and file naming to use different formats. Invalid Windows filename characters are automatically replaced with `_`.
 <br><br>
 ```json
 {
     "max_log_files": 5,
-    "timestamp_format": "%Y-%m-%d %H:%M:%S"
+    "timestamp_format": "%Y-%m-%d %H:%M:%S",
+    "filename_timestamp_format": "%Y%m%d_%H%M%S"
 }
 ```
 

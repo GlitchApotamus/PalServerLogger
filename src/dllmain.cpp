@@ -112,7 +112,8 @@ void InitializeLogEnvironment()
 
     json defaultJson = {
         {"max_log_files", 5},
-        {"timestamp_format", "%Y-%m-%d %H:%M:%S"}};
+        {"timestamp_format", "%Y-%m-%d %H:%M:%S"},
+        {"filename_timestamp_format", "%Y%m%d_%H%M%S"}};
 
     bool configModified = false;
     json config;
@@ -161,7 +162,6 @@ void InitializeLogEnvironment()
             g_MaxLogs = config["max_log_files"];
         if (config.contains("timestamp_format"))
             g_TimestampFormat = config["timestamp_format"];
-        // Keep filename format aligned with user timestamp format unless an explicit override exists.
         if (config.contains("filename_timestamp_format"))
             g_FileTimestampFormat = config["filename_timestamp_format"];
         else

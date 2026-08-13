@@ -123,7 +123,7 @@ jobs:
           Invoke-RestMethod `
             -Method POST `
             -Uri "$env:NEXUS_API_BASE/uploads/$uploadId/finalise" `
-            -Headers @{ "apikey" = $env:NEXUS_API_TOKEN }
+            -Headers @{ "apikey" = $env:NEXUS_API_KEY }
 
           $maxAttempts = 30
           $delaySeconds = 5
@@ -133,7 +133,7 @@ jobs:
             $statusResp = Invoke-RestMethod `
               -Method GET `
               -Uri "$env:NEXUS_API_BASE/uploads/$uploadId" `
-              -Headers @{ "apikey" = $env:NEXUS_API_TOKEN }
+              -Headers @{ "apikey" = $env:NEXUS_API_KEY }
 
             $state = $statusResp.data.state
             Write-Host "Upload state attempt $i/$($maxAttempts): $state"

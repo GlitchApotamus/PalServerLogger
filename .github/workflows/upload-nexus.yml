@@ -1,27 +1,13 @@
 name: Upload Mod To Nexus
 
 on:
-  workflow_dispatch:
-    inputs:
-      zip_path:
-        description: "Zip path or glob pattern to upload"
-        required: false
-        default: "build/Release/PalServerLogger-*.zip"
-      file_name:
-        description: "Nexus mod file display name"
-        required: false
-        default: "PalServerLogger"
-      file_version:
-        description: "Nexus mod file version (defaults to version.txt if empty)"
-        required: false
-        default: ""
-      file_category:
-        description: "Nexus file category"
-        required: false
-        default: "main"
+  workflow_run:
+    workflows: ["Auto Release"]
+    types: [completed]
 
 jobs:
   upload-to-nexus:
+    if: ${{ github.event.workflow_run.conclusion == 'success' }}
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -33,14 +19,57 @@ jobs:
       - name: Checkout Repository
         uses: actions/checkout@v5
 
-      - name: Upload Zip To Nexus
+      - name: Download latest release zip
+        id: release_zip
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+
+          repo="${{ github.repository }}"
+          release_json="$(gh api -H "Accept: application/vnd.github+json" "repos/$repo/releases/latest")"
+
+          zip_url="$(printf '%s\n' "$release_json" | jq -r '.assets[] | select(.name | test("PalServerLogger-.*\\.zip$")) | .url' | head -n 1)"
+          zip_name="$(printf '%s\n' "$release_json" | jq -r '.assets[] | select(.name | test("PalServerLogger-.*\\.zip$")) | .name' | head -n 1)"
+
+          if [ -z "$zip_url" ] || [ "$zip_url" = "null" ] || [ -z "$zip_name" ] || [ "$zip_name" = "null" ]; then
+            echo "No PalServerLogger zip asset found in latest release."
+            exit 1
+          fi
+
+          mkdir -p .release-artifacts
+          curl -L \
+            -H "Authorization: Bearer $GH_TOKEN" \
+            -H "Accept: application/octet-stream" \
+            -o ".release-artifacts/$zip_name" \
+            "$zip_url"
+
+          echo "zip_path=.release-artifacts/$zip_name" >> "$GITHUB_OUTPUT"
+          echo "zip_name=$zip_name" >> "$GITHUB_OUTPUT"
+          ls -l .release-artifacts
+
+      - name: Resolve release version
+        id: version
+        shell: pwsh
+        run: |
+          $version = (Get-Content -LiteralPath "version.txt" -Raw).Trim()
+          if ([string]::IsNullOrWhiteSpace($version)) {
+            throw "version.txt is empty or missing."
+          }
+
+          $fileVersion = "1.$version"
+          "file_version=$fileVersion" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+          Write-Host "Using Nexus version: $fileVersion"
+
+      - name: Upload zip to Nexus
         shell: pwsh
         env:
           NEXUS_API_TOKEN: ${{ secrets.NEXUS_API_TOKEN }}
-          ZIP_PATH: ${{ github.event.inputs.zip_path }}
-          FILE_NAME: ${{ github.event.inputs.file_name }}
-          FILE_VERSION_INPUT: ${{ github.event.inputs.file_version }}
-          FILE_CATEGORY: ${{ github.event.inputs.file_category }}
+          ZIP_PATH: ${{ steps.release_zip.outputs.zip_path }}
+          FILE_NAME: "PalServerLogger"
+          FILE_VERSION: ${{ steps.version.outputs.file_version }}
+          FILE_CATEGORY: "main"
         run: |
           $ErrorActionPreference = 'Stop'
 
@@ -48,40 +77,17 @@ jobs:
             throw "NEXUS_API_TOKEN is not set."
           }
 
-          # Resolve either an exact file path or a glob pattern to the newest matching zip.
-          $zipCandidates = @()
-          if (Test-Path -LiteralPath $env:ZIP_PATH) {
-            $resolved = Get-Item -LiteralPath $env:ZIP_PATH
-            if ($resolved.PSIsContainer) {
-              $zipCandidates = Get-ChildItem -Path $resolved.FullName -Filter '*.zip' -File
-            } else {
-              $zipCandidates = @($resolved)
-            }
-          } else {
-            $zipCandidates = Get-ChildItem -Path $env:ZIP_PATH -File -ErrorAction SilentlyContinue
+          if (-not (Test-Path -LiteralPath $env:ZIP_PATH)) {
+            throw "No zip file found at path: $env:ZIP_PATH"
           }
 
-          if (-not $zipCandidates -or $zipCandidates.Count -eq 0) {
-            throw "No zip file found for ZIP_PATH: $env:ZIP_PATH"
-          }
-
-          $zipFile = $zipCandidates | Sort-Object LastWriteTime -Descending | Select-Object -First 1
-          Write-Host "Using zip file: $($zipFile.FullName)"
+          $zipFile = Get-Item -LiteralPath $env:ZIP_PATH
           $zipName = $zipFile.Name
           $zipSize = [int64]$zipFile.Length
-
-          $fileVersion = $env:FILE_VERSION_INPUT
-          if ([string]::IsNullOrWhiteSpace($fileVersion)) {
-            if (Test-Path -LiteralPath "version.txt") {
-              $v = (Get-Content -LiteralPath "version.txt" -Raw).Trim()
-              if (-not [string]::IsNullOrWhiteSpace($v)) {
-                $fileVersion = "1.$v"
-              }
-            }
-          }
+          $fileVersion = $env:FILE_VERSION
 
           if ([string]::IsNullOrWhiteSpace($fileVersion)) {
-            throw "Could not determine file version. Provide workflow input file_version or set version.txt."
+            throw "Could not determine file version."
           }
 
           $headers = @{

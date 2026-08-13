@@ -63,6 +63,8 @@ Overrides only the filename timestamp format if you want line timestamps and fil
 }
 ```
 
+If an existing `logger_config.json` is missing any supported fields, the mod will automatically add the missing values on startup and keep the user's current settings intact. This means you do not have to delete the file just to get new defaults such as `filename_timestamp_format`.
+
 # Main features
 
 * **Zero-Config Injection:** Uses a professional DLL Proxy (`d3d9.dll`) to auto-load mods when the server starts.

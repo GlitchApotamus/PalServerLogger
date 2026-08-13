@@ -28,25 +28,18 @@ jobs:
           set -euo pipefail
 
           repo="${{ github.repository }}"
-          release_json="$(gh api -H "Accept: application/vnd.github+json" "repos/$repo/releases/latest")"
+          mkdir -p .release-artifacts
 
-          zip_url="$(printf '%s\n' "$release_json" | jq -r '.assets[] | select(.name | test("PalServerLogger-.*\\.zip$")) | .url' | head -n 1)"
-          zip_name="$(printf '%s\n' "$release_json" | jq -r '.assets[] | select(.name | test("PalServerLogger-.*\\.zip$")) | .name' | head -n 1)"
+          gh release download --repo "$repo" --pattern "PalServerLogger-*.zip" --dir .release-artifacts
 
-          if [ -z "$zip_url" ] || [ "$zip_url" = "null" ] || [ -z "$zip_name" ] || [ "$zip_name" = "null" ]; then
-            echo "No PalServerLogger zip asset found in latest release."
+          zip_path="$(find .release-artifacts -type f -name 'PalServerLogger-*.zip' | sort | tail -n 1)"
+          if [ -z "$zip_path" ]; then
+            echo "No PalServerLogger zip asset found in the latest release."
             exit 1
           fi
 
-          mkdir -p .release-artifacts
-          curl -L \
-            -H "Authorization: Bearer $GH_TOKEN" \
-            -H "Accept: application/octet-stream" \
-            -o ".release-artifacts/$zip_name" \
-            "$zip_url"
-
-          echo "zip_path=.release-artifacts/$zip_name" >> "$GITHUB_OUTPUT"
-          echo "zip_name=$zip_name" >> "$GITHUB_OUTPUT"
+          echo "zip_path=$zip_path" >> "$GITHUB_OUTPUT"
+          echo "zip_name=$(basename "$zip_path")" >> "$GITHUB_OUTPUT"
           ls -l .release-artifacts
 
       - name: Resolve release version
@@ -143,7 +136,7 @@ jobs:
               -Headers @{ "apikey" = $env:NEXUS_API_TOKEN }
 
             $state = $statusResp.data.state
-            Write-Host "Upload state attempt $i/$maxAttempts: $state"
+            Write-Host "Upload state attempt $i/$($maxAttempts): $state"
 
             if ($state -eq "available") {
               $isAvailable = $true

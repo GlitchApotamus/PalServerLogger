@@ -154,7 +154,7 @@ jobs:
           try {
             $modResp = Invoke-RestMethod `
               -Method GET `
-              -Uri "$env:NEXUS_API_BASE/mods/$env:NEXUS_MOD_ID" `
+              -Uri "$env:NEXUS_API_BASE/games/palworld/mods/$env:NEXUS_MOD_ID" `
               -Headers @{ "apikey" = $env:NEXUS_API_KEY }
 
             $modName = if ($modResp.data.name) { $modResp.data.name } else { "unknown" }
@@ -162,7 +162,7 @@ jobs:
           }
           catch {
             $detail = $_.Exception.Message
-            throw "Nexus mod verification failed for mod_id=$env:NEXUS_MOD_ID. Check that the mod ID is correct and that the API key has access to that mod. Details: $detail"
+            throw "Nexus mod verification failed for game='palworld', mod_id=$env:NEXUS_MOD_ID. Check that the personal API key is from the same Nexus account that owns the mod, and that the mod ID is correct. Details: $detail"
           }
 
           $createModFileBody = @{

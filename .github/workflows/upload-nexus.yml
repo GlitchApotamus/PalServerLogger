@@ -13,7 +13,7 @@ jobs:
       contents: read
     env:
       NEXUS_API_BASE: https://api.nexusmods.com/v3
-      NEXUS_MOD_ID: "7719219"
+      NEXUS_MOD_ID: "3647"
 
     steps:
       - name: Checkout Repository
@@ -152,7 +152,6 @@ jobs:
 
           $createModFileBody = @{
             upload_id = $uploadId
-            mod_id = $env:NEXUS_MOD_ID
             name = $env:FILE_NAME
             version = $fileVersion
             file_category = $env:FILE_CATEGORY
@@ -164,7 +163,7 @@ jobs:
           Write-Host "Creating mod file on Nexus (mod_id=$env:NEXUS_MOD_ID)..."
           $createModFileResp = Invoke-RestMethod `
             -Method POST `
-            -Uri "$env:NEXUS_API_BASE/mod-files" `
+            -Uri "$env:NEXUS_API_BASE/mods/$env:NEXUS_MOD_ID/files" `
             -Headers $headers `
             -Body $createModFileBody
 

@@ -14,6 +14,7 @@ jobs:
     env:
       NEXUS_API_BASE: https://api.nexusmods.com/v3
       NEXUS_MOD_ID: "3647"
+      NEXUS_FILE_ID: "REPLACE_WITH_FILE_ID"
 
     steps:
       - name: Checkout Repository
@@ -55,133 +56,28 @@ jobs:
           "file_version=$fileVersion" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
           Write-Host "Using Nexus version: $fileVersion"
 
-      - name: Upload zip to Nexus
+      - name: Validate Nexus file metadata
         shell: pwsh
-        env:
-          NEXUS_API_KEY: ${{ secrets.NEXUS_API_KEY }}
-          ZIP_PATH: ${{ steps.release_zip.outputs.zip_path }}
-          FILE_NAME: "PalServerLogger"
-          FILE_VERSION: ${{ steps.version.outputs.file_version }}
-          FILE_CATEGORY: "main"
         run: |
-          $ErrorActionPreference = 'Stop'
+          if ("${{ env.NEXUS_FILE_ID }}" -eq "REPLACE_WITH_FILE_ID") {
+            throw "Set NEXUS_FILE_ID in the workflow to the existing Nexus file ID for this mod before running the upload step. You can find it in the Nexus mod's Files tab under API Info."
+          }
 
-          if (-not $env:NEXUS_API_KEY) {
+          if ([string]::IsNullOrWhiteSpace("${{ secrets.NEXUS_API_KEY }}")) {
             throw "NEXUS_API_KEY is not set."
           }
 
-          if (-not (Test-Path -LiteralPath $env:ZIP_PATH)) {
-            throw "No zip file found at path: $env:ZIP_PATH"
-          }
-
-          $zipFile = Get-Item -LiteralPath $env:ZIP_PATH
-          $zipName = $zipFile.Name
-          $zipSize = [int64]$zipFile.Length
-          $fileVersion = $env:FILE_VERSION
-
-          if ([string]::IsNullOrWhiteSpace($fileVersion)) {
-            throw "Could not determine file version."
-          }
-
-          $headers = @{
-            "apikey" = $env:NEXUS_API_KEY
-            "Content-Type" = "application/json"
-          }
-
-          Write-Host "Creating upload session for $zipName ($zipSize bytes)..."
-          $createUploadBody = @{
-            size_bytes = $zipSize
-            filename = $zipName
-          } | ConvertTo-Json
-
-          $createUploadResp = Invoke-RestMethod `
-            -Method POST `
-            -Uri "$env:NEXUS_API_BASE/uploads" `
-            -Headers $headers `
-            -Body $createUploadBody
-
-          $uploadId = $createUploadResp.data.id
-          $presignedUrl = $createUploadResp.data.presigned_url
-
-          if ([string]::IsNullOrWhiteSpace($uploadId) -or [string]::IsNullOrWhiteSpace($presignedUrl)) {
-            throw "Create upload response missing id or presigned_url."
-          }
-
-          Write-Host "Uploading zip data to presigned URL..."
-          $uploadHeaders = @{
-            "Content-Disposition" = "attachment; filename=`"$zipName`""
-            "Content-Type" = "application/octet-stream"
-          }
-
-          Invoke-RestMethod `
-            -Method PUT `
-            -Uri $presignedUrl `
-            -Headers $uploadHeaders `
-            -InFile $zipFile.FullName
-
-          Write-Host "Finalising upload session $uploadId..."
-          Invoke-RestMethod `
-            -Method POST `
-            -Uri "$env:NEXUS_API_BASE/uploads/$uploadId/finalise" `
-            -Headers @{ "apikey" = $env:NEXUS_API_KEY }
-
-          $maxAttempts = 30
-          $delaySeconds = 5
-          $isAvailable = $false
-
-          for ($i = 1; $i -le $maxAttempts; $i++) {
-            $statusResp = Invoke-RestMethod `
-              -Method GET `
-              -Uri "$env:NEXUS_API_BASE/uploads/$uploadId" `
-              -Headers @{ "apikey" = $env:NEXUS_API_KEY }
-
-            $state = $statusResp.data.state
-            Write-Host "Upload state attempt $i/$($maxAttempts): $state"
-
-            if ($state -eq "available") {
-              $isAvailable = $true
-              break
-            }
-
-            Start-Sleep -Seconds $delaySeconds
-          }
-
-          if (-not $isAvailable) {
-            throw "Upload did not become available in time."
-          }
-
-          Write-Host "Verifying Nexus mod access for mod_id=$env:NEXUS_MOD_ID..."
-          try {
-            $modResp = Invoke-RestMethod `
-              -Method GET `
-              -Uri "$env:NEXUS_API_BASE/games/palworld/mods/$env:NEXUS_MOD_ID" `
-              -Headers @{ "apikey" = $env:NEXUS_API_KEY }
-
-            $modName = if ($modResp.data.name) { $modResp.data.name } else { "unknown" }
-            Write-Host "Nexus mod verified: $modName (id=$env:NEXUS_MOD_ID)"
-          }
-          catch {
-            $detail = $_.Exception.Message
-            throw "Nexus mod verification failed for game='palworld', mod_id=$env:NEXUS_MOD_ID. Check that the personal API key is from the same Nexus account that owns the mod, and that the mod ID is correct. Details: $detail"
-          }
-
-          $createModFileBody = @{
-            upload_id = $uploadId
-            name = $env:FILE_NAME
-            version = $fileVersion
-            file_category = $env:FILE_CATEGORY
-            allow_mod_manager_download = $false
-            primary_mod_manager_download = $true
-            update_mod_version = $true
-          } | ConvertTo-Json
-
-          Write-Host "Creating mod file on Nexus (mod_id=$env:NEXUS_MOD_ID)..."
-          $createModFileResp = Invoke-RestMethod `
-            -Method POST `
-            -Uri "$env:NEXUS_API_BASE/mods/$env:NEXUS_MOD_ID/files" `
-            -Headers $headers `
-            -Body $createModFileBody
-
-          $createdFileId = $createModFileResp.data.id
-          $createdFileScopedId = $createModFileResp.data.game_scoped_id
-          Write-Host "Created Nexus mod file id=$createdFileId game_scoped_id=$createdFileScopedId"
+      - name: Upload zip to Nexus
+        uses: Nexus-Mods/upload-action@v1
+        with:
+          api_key: ${{ secrets.NEXUS_API_KEY }}
+          file_id: ${{ env.NEXUS_FILE_ID }}
+          filename: ${{ steps.release_zip.outputs.zip_name }}
+          version: ${{ steps.version.outputs.file_version }}
+          display_name: "PalServerLogger"
+          category: main
+          archive_existing_version: false
+          primary_mod_manager_download: false
+          allow_mod_manager_download: false
+          show_requirements_pop_up: false
+          update_mod_version: true

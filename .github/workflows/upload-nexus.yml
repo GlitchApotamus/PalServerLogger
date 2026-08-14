@@ -58,7 +58,7 @@ jobs:
       - name: Upload zip to Nexus
         shell: pwsh
         env:
-          NEXUS_API_TOKEN: ${{ secrets.NEXUS_API_TOKEN }}
+          NEXUS_API_KEY: ${{ secrets.NEXUS_API_KEY }}
           ZIP_PATH: ${{ steps.release_zip.outputs.zip_path }}
           FILE_NAME: "PalServerLogger"
           FILE_VERSION: ${{ steps.version.outputs.file_version }}
@@ -66,8 +66,8 @@ jobs:
         run: |
           $ErrorActionPreference = 'Stop'
 
-          if (-not $env:NEXUS_API_TOKEN) {
-            throw "NEXUS_API_TOKEN is not set."
+          if (-not $env:NEXUS_API_KEY) {
+            throw "NEXUS_API_KEY is not set."
           }
 
           if (-not (Test-Path -LiteralPath $env:ZIP_PATH)) {
@@ -84,7 +84,7 @@ jobs:
           }
 
           $headers = @{
-            "apikey" = $env:NEXUS_API_TOKEN
+            "apikey" = $env:NEXUS_API_KEY
             "Content-Type" = "application/json"
           }
 

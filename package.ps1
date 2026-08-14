@@ -10,14 +10,6 @@ if (Test-Path $verFile) {
     $patch = 0
 }
 
-if ($patch -ge 9) {
-    $minor++
-    $patch = 0
-} else {
-    $patch++
-}
-
-"$minor.$patch" | Set-Content $verFile
 $timestamp = Get-Date -Format 'yyyyMMdd_HHmmss'
 $versionStr = "1.$minor.$patch-$timestamp"
 

@@ -4,29 +4,26 @@ project(PalServerLogger VERSION 1.0 LANGUAGES CXX C)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
-# 1. Automatic Versioning with State Persistence
+# 1. Version from source-of-truth file
 set(VERSION_FILE "${CMAKE_CURRENT_SOURCE_DIR}/version.txt")
 
 if(EXISTS "${VERSION_FILE}")
     file(READ "${VERSION_FILE}" VERSION_CONTENT)
     string(STRIP "${VERSION_CONTENT}" VERSION_CONTENT)
     string(REPLACE "." ";" VERSION_LIST "${VERSION_CONTENT}")
-    list(GET VERSION_LIST 0 CPACK_MINOR_VAL)
-    list(GET VERSION_LIST 1 CPACK_PATCH_VAL)
+    list(LENGTH VERSION_LIST VERSION_LEN)
+
+    if(VERSION_LEN GREATER 1)
+        list(GET VERSION_LIST 0 CPACK_MINOR_VAL)
+        list(GET VERSION_LIST 1 CPACK_PATCH_VAL)
+    else()
+        set(CPACK_MINOR_VAL 0)
+        set(CPACK_PATCH_VAL 0)
+    endif()
 else()
     set(CPACK_MINOR_VAL 0)
     set(CPACK_PATCH_VAL 0)
 endif()
-
-# Increment patch; if it hits 9, bump minor and reset patch to 0
-if(CPACK_PATCH_VAL GREATER_EQUAL 9)
-    math(EXPR CPACK_MINOR_VAL "${CPACK_MINOR_VAL} + 1")
-    set(CPACK_PATCH_VAL 0)
-else()
-    math(EXPR CPACK_PATCH_VAL "${CPACK_PATCH_VAL} + 1")
-endif()
-
-file(WRITE "${VERSION_FILE}" "${CPACK_MINOR_VAL}.${CPACK_PATCH_VAL}")
 
 string(TIMESTAMP BUILD_TIMESTAMP "%Y%m%d_%H%M%S")
 set(PACKAGE_VERSION "1.${CPACK_MINOR_VAL}.${CPACK_PATCH_VAL}-${BUILD_TIMESTAMP}")

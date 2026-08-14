@@ -150,6 +150,21 @@ jobs:
             throw "Upload did not become available in time."
           }
 
+          Write-Host "Verifying Nexus mod access for mod_id=$env:NEXUS_MOD_ID..."
+          try {
+            $modResp = Invoke-RestMethod `
+              -Method GET `
+              -Uri "$env:NEXUS_API_BASE/mods/$env:NEXUS_MOD_ID" `
+              -Headers @{ "apikey" = $env:NEXUS_API_KEY }
+
+            $modName = if ($modResp.data.name) { $modResp.data.name } else { "unknown" }
+            Write-Host "Nexus mod verified: $modName (id=$env:NEXUS_MOD_ID)"
+          }
+          catch {
+            $detail = $_.Exception.Message
+            throw "Nexus mod verification failed for mod_id=$env:NEXUS_MOD_ID. Check that the mod ID is correct and that the API key has access to that mod. Details: $detail"
+          }
+
           $createModFileBody = @{
             upload_id = $uploadId
             name = $env:FILE_NAME

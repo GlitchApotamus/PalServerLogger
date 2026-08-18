@@ -68,7 +68,7 @@ jobs:
           }
 
       - name: Upload zip to Nexus
-        uses: Nexus-Mods/upload-action@v1
+        uses: Nexus-Mods/upload-action@v1.0.0-beta.9
         with:
           api_key: ${{ secrets.NEXUS_API_KEY }}
           file_id: ${{ env.NEXUS_FILE_ID }}

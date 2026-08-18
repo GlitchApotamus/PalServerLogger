@@ -129,7 +129,6 @@ DWORD WINAPI ChainLoadDLLs(LPVOID lpParam)
 
     const json defaultConfig = {
         {"load_dlls", json::array({"PalServerLogger.dll"})},
-        {"UsePalDefender", false},
         {"translations", {{"ModLoaderPrefix", "ModLoader"}, {"ModThreadStarted", "Mod thread started."}, {"ConfigMissing", "Config missing. Generating default d3d9_config.json..."}, {"DefaultConfigCreated", "Default config created."}, {"AttemptingLoad", "Attempting to load: {0}"}, {"InjectedSuccess", "Injected {0}"}, {"InjectedFailed", "Failed to inject {0}. Windows Error Code: {1}"}, {"ConfigErrorMissingArray", "JSON does not contain 'load_dlls' array."}, {"ConfigErrorOpening", "Could not open config at: {0}"}}}};
 
     auto writeConfig = [&]()
@@ -142,38 +141,75 @@ DWORD WINAPI ChainLoadDLLs(LPVOID lpParam)
         }
     };
 
-    // Recursively restore missing keys from defaults while preserving user overrides.
-    std::function<bool(json &, const json &)> mergeMissingKeys =
-        [&](json &target, const json &defaults) -> bool
+    // Keep the config in sync with the loader's schema while preserving valid user data.
+    std::function<bool(json &, const json &)> syncConfigToSchema =
+        [&](json &target, const json &schema) -> bool
     {
         bool changed = false;
-        if (!defaults.is_object())
+
+        if (!schema.is_object())
         {
             return false;
         }
 
         if (!target.is_object())
         {
-            target = defaults;
+            target = schema;
             return true;
         }
 
-        for (auto it = defaults.begin(); it != defaults.end(); ++it)
+        std::vector<std::string> keysToRemove;
+        for (auto it = target.begin(); it != target.end(); ++it)
         {
             const std::string &key = it.key();
-            const json &defaultValue = it.value();
+            if (!schema.contains(key))
+            {
+                keysToRemove.push_back(key);
+                continue;
+            }
+
+            if (schema[key].is_object() && it.value().is_object())
+            {
+                if (syncConfigToSchema(it.value(), schema[key]))
+                {
+                    changed = true;
+                }
+            }
+        }
+
+        for (const std::string &key : keysToRemove)
+        {
+            target.erase(key);
+            changed = true;
+        }
+
+        for (auto it = schema.begin(); it != schema.end(); ++it)
+        {
+            const std::string &key = it.key();
+            const json &schemaValue = it.value();
 
             if (!target.contains(key))
             {
-                target[key] = defaultValue;
+                target[key] = schemaValue;
                 changed = true;
                 continue;
             }
 
-            if (defaultValue.is_object())
+            if (schemaValue.is_object() && target[key].is_object() && !target[key].is_array())
             {
-                changed = mergeMissingKeys(target[key], defaultValue) || changed;
+                // Nested objects are recursively normalized, but arrays are preserved.
             }
+        }
+
+        if (!target.contains("load_dlls"))
+        {
+            target["load_dlls"] = defaultConfig["load_dlls"];
+            changed = true;
+        }
+        else if (!target["load_dlls"].is_array())
+        {
+            target["load_dlls"] = json::array();
+            changed = true;
         }
 
         return changed;
@@ -205,44 +241,19 @@ DWORD WINAPI ChainLoadDLLs(LPVOID lpParam)
             }
         }
 
-        configUpdated = mergeMissingKeys(g_config, defaultConfig) || configUpdated;
+        configUpdated = syncConfigToSchema(g_config, defaultConfig) || configUpdated;
     }
 
     DebugLog(LOG_INFO, Translate("ModThreadStarted", "Mod thread started."));
 
-    if (!g_config.contains("load_dlls") || !g_config["load_dlls"].is_array())
+    if (!g_config.contains("load_dlls"))
+    {
+        g_config["load_dlls"] = defaultConfig["load_dlls"];
+        configUpdated = true;
+    }
+    else if (!g_config["load_dlls"].is_array())
     {
         g_config["load_dlls"] = json::array();
-        configUpdated = true;
-    }
-
-    const bool usePalDefender = g_config.value("UsePalDefender", false);
-    bool hasPalDefender = false;
-    for (const auto &mod : g_config["load_dlls"])
-    {
-        if (mod.is_string() && mod.get<std::string>() == "PalDefender.dll")
-        {
-            hasPalDefender = true;
-            break;
-        }
-    }
-
-    if (usePalDefender && !hasPalDefender)
-    {
-        g_config["load_dlls"].push_back("PalDefender.dll");
-        configUpdated = true;
-    }
-    else if (!usePalDefender && hasPalDefender)
-    {
-        json filteredLoadDlls = json::array();
-        for (const auto &mod : g_config["load_dlls"])
-        {
-            if (!(mod.is_string() && mod.get<std::string>() == "PalDefender.dll"))
-            {
-                filteredLoadDlls.push_back(mod);
-            }
-        }
-        g_config["load_dlls"] = filteredLoadDlls;
         configUpdated = true;
     }
 

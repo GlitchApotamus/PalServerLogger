@@ -10,23 +10,28 @@ Because the native Palworld server discards log data upon exit, traditional logg
 
 # Installation instructions
 Download, extract and drop both files into \Pal\Binaries\Win64.
-> **Important Note for PalDefender Users:** 
-> If you are using PalDefender, you must switch to using our `d3d9.dll` proxy loader as your primary injection point to take advantage of the new localization and translation features. You won't lose PalDefender functionality — Simply set `UsePalDefender` to `true` or add `"PalDefender.dll"` to your `load_dlls` array inside the newly generated `d3d9_config.json` alongside your other mods! By default, `UsePalDefender` is set to `false` to prevent errors on startup.
 
 Restart the server and you will see a new folder "PalServerLogs" where you will find timestamped log files. A new one is generated every time your restart the server.
 
 # Configuration & Translations
 On first boot, the mod loader automatically generates a `d3d9_config.json` file in your binaries directory. This file controls which DLLs are loaded and handles text localization.
 
-### How to Update or Customize Translations
-If you want to translate the mod loader output into another language or modify the existing messages, open `d3d9_config.json` and locate the `"translations"` object block:
+## `load_dlls` behavior
+The loader uses only the `load_dlls` array to decide which DLLs to inject. There is no longer a separate `UsePalDefender` toggle.
+
+- To load PalDefender, add `"PalDefender.dll"` to `load_dlls`.
+- To disable it, remove that entry from the array.
+- If the config file is missing or malformed, the loader will repair it on startup and keep the existing valid entries intact.
+- Unknown keys are removed on each load, and missing supported keys are added back in so the config stays aligned with the loader schema.
+
+Example:
 
 ```json
 {
     "load_dlls": [
-        "PalServerLogger.dll"
+        "PalServerLogger.dll",
+        "PalDefender.dll"
     ],
-    "UsePalDefender": false,
     "translations": {
         "ModThreadStarted": "Mod thread started.",
         "ConfigMissing": "Config missing. Generating default d3d9_config.json...",
@@ -39,9 +44,15 @@ If you want to translate the mod loader output into another language or modify t
     }
 }
 ```
+
+### How to Update or Customize Translations
+If you want to translate the mod loader output into another language or modify the existing messages, open `d3d9_config.json` and locate the `"translations"` object block.
+
 * **Customizing Text:** Simply edit the string value to the right of any key.
 * **Dynamic Placeholders:** Keep tokens like `{0}` and `{1}` intact inside your custom strings, as they are dynamically replaced with runtime data (such as filenames or error codes).
 * **Fallbacks:** If a key is missing or removed from your config file, the loader will automatically fall back to its built-in default strings safely.
+
+See the project changelog in [CHANGELOG.md](CHANGELOG.md) for release notes and version history.
 
 ## Mod Configuration File
 

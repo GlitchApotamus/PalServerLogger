@@ -14,7 +14,7 @@ jobs:
     env:
       NEXUS_API_BASE: https://api.nexusmods.com/v3
       NEXUS_MOD_ID: "3647"
-      NEXUS_FILE_ID: "REPLACE_WITH_FILE_ID"
+      NEXUS_FILE_ID: "7719219"
 
     steps:
       - name: Checkout Repository

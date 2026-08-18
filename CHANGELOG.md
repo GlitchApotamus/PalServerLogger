@@ -2,7 +2,7 @@
 
 All notable changes to PalServerLogger are documented in this file. This changelog is based on the project’s Git history and release tags.
 
-## Unreleased
+## 1.1.1
 
 ### Changed
 - Removed the legacy `UsePalDefender` config toggle.
@@ -13,6 +13,11 @@ All notable changes to PalServerLogger are documented in this file. This changel
   - user-defined `load_dlls` entries are preserved instead of being replaced with defaults
 
 ---
+
+## 1.0.8 - 1.1.0
+
+### Changed
+- Updating Github Workflows.
 
 ## 1.0.7
 

@@ -13,7 +13,7 @@ Download, extract and drop both files into \Pal\Binaries\Win64.
 
 Restart the server and you will see a new folder "PalServerLogs" where you will find timestamped log files. A new one is generated every time you restart the server.
 
-The mod also starts a websocket listener on port 8765 by default, so a Discord bot or monitoring script can keep a constant live connection to the server output without blocking the game thread.
+The mod also starts a websocket listener on port 8765 by default, so a Discord bot or monitoring script can keep a constant live connection to the server output without blocking the game thread. The default bind is loopback-only (`127.0.0.1`) and the websocket requires a shared secret token before it will accept a connection.
 
 # Configuration & Translations
 On first boot, the mod loader automatically generates a `d3d9_config.json` file in your binaries directory. This file controls which DLLs are loaded and handles text localization.
@@ -71,8 +71,12 @@ Overrides only the filename timestamp format if you want line timestamps and fil
 Enables or disables the live websocket server used for external bots and monitoring tools.
 * `websocket_port` (Integer, Default: 8765):<br>
 Specifies which local port the websocket server will bind to.
-* `websocket_host` (String, Default: "0.0.0.0"):<br>
-Controls the bind address. Use `127.0.0.1` for local-only access or `0.0.0.0` to accept connections from other machines on the same network.
+* `websocket_host` (String, Default: "127.0.0.1"):<br>
+Controls the bind address. Use `127.0.0.1` for local-only access or a LAN IP if you intentionally want remote clients on the same trusted network.
+* `websocket_secret` (String, Default: "change-me-to-a-long-random-secret"):<br>
+Required for websocket auth. Connections without the matching token are rejected with `401 Unauthorized`.
+* `debug_hooks` (Boolean, Default: false):<br>
+Enables extra logging around MinHook initialization and active console/debug capture paths to help diagnose compatibility issues in unusual environments.
 <br><br>
 ```json
 {
@@ -81,11 +85,13 @@ Controls the bind address. Use `127.0.0.1` for local-only access or `0.0.0.0` to
     "filename_timestamp_format": "%Y%m%d_%H%M%S",
     "websocket_enabled": true,
     "websocket_port": 8765,
-    "websocket_host": "0.0.0.0"
+    "websocket_host": "127.0.0.1",
+    "websocket_secret": "change-me-to-a-long-random-secret",
+    "debug_hooks": false
 }
 ```
 
-If an existing `logger_config.json` is missing any supported fields, the mod will automatically add the missing values on startup and keep the user's current settings intact. This means you do not have to delete the file just to get new defaults such as `filename_timestamp_format` or the websocket settings.
+If an existing `logger_config.json` is missing any supported fields, the mod will automatically add the missing values on startup and keep the user's current settings intact. This means you do not have to delete the file just to get new defaults such as `filename_timestamp_format`, websocket auth, or debug tracing.
 
 # Main features
 
@@ -98,9 +104,13 @@ If an existing `logger_config.json` is missing any supported fields, the mod wil
 * **Automatic Rotation:** Keeps only the newest configured log files and deletes older ones automatically.
 * **Stable Architecture:** Built with thread-safe queueing and injection logic to prevent server crashes and boot-time deadlocks.
 
-# Websocket payload format
+# Websocket security and payload format
 
-When a client is connected, the mod sends a status frame and then one JSON log event per message:
+The websocket listener is intended to be used as a private local stream. By default it binds to `127.0.0.1` and requires a shared secret token before it will accept a connection. This prevents random machines from reading the log stream simply by knowing the IP and port.
+
+Clients may authenticate with either an `Authorization: Bearer <token>` header or a query string token such as `?token=<secret>`.
+
+Example payloads:
 
 ```json
 {"type":"status","message":"PalServerLogger websocket connected"}
@@ -108,6 +118,17 @@ When a client is connected, the mod sends a status frame and then one JSON log e
 ```
 
 The websocket runs independently from the main game loop, which keeps the server responsive while external bots stay connected.
+
+# Recommended usage
+
+For a Discord bot or local dashboard, the safest setup is:
+
+* bind to `127.0.0.1`
+* keep `websocket_enabled` enabled
+* set `websocket_secret` to a strong random value
+* connect from the same machine or a trusted private network only
+
+Avoid exposing the websocket to the public internet unless you also add TLS termination and a proper firewall policy.
 
 # Requirements
 

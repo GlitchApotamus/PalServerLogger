@@ -8,6 +8,18 @@
 # Description
 Because the native Palworld server discards log data upon exit, traditional logging methods often fail to capture the complete lifecycle of the server. This logger solves that by running a highly optimized hook architecture that captures console and debug output, writes it to session-based log files, and can stream the same log lines live over a websocket for bots and external tools.
 
+## Native Windows vs Wine/Proton/AMP behavior
+
+This logger is designed primarily for native Windows Palworld server installs. In a normal Windows environment, it captures output through the usual Win32 console/debug APIs such as `WriteConsole*`, `WriteFile`, and `OutputDebugString*`.
+
+Under Wine, Proton, or AMP-managed server environments, the server may not emit through those same Windows console paths. In those cases, the output is often routed through a different runtime or file-backed logging path, and the logger may only see the early startup/breakpad text unless the fallback log-tail support is active.
+
+In short:
+
+* Native Windows server: expected to work with console-hook capture.
+* Wine/Proton/AMP server: still supported, but output may be redirected or buffered differently; the logger falls back to monitoring likely log files when native console hooks do not receive the full stream.
+* If you are running through AMP or a Linux container, use `debug_hooks` to confirm which capture path is active and whether the fallback is seeing the real log file.
+
 # Installation instructions
 Download, extract and drop both files into \Pal\Binaries\Win64.
 
@@ -130,9 +142,17 @@ For a Discord bot or local dashboard, the safest setup is:
 
 Avoid exposing the websocket to the public internet unless you also add TLS termination and a proper firewall policy.
 
+# Example websocket client
+
+A working example of a client connecting to this logger is available here: [GlitchApotamus/PalServerWebsocket](https://github.com/GlitchApotamus/PalServerWebsocket)
+
+That project demonstrates how to connect to the logger websocket, authenticate with the configured secret, and stream incoming log messages from the server in real time.
+
 # Requirements
 
-Currently only support windows based servers. Linux is planned but may be a while. This mod does not require UE4SS, only the d3d9.dll that's shipped with it.
+The primary supported path is a native Windows Palworld server. The mod also includes compatibility handling for Wine/Proton/AMP-managed environments, but output capture is less predictable there because those setups often route server logs through a different runtime or file-based system instead of a standard Windows console.
+
+This mod does not require UE4SS, only the `d3d9.dll` that's shipped with it.
 
 # Source Code
 

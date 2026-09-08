@@ -15,6 +15,7 @@
 #include <queue>
 #include <thread>
 #include <cstdint>
+#include <unordered_map>
 #include <nlohmann/json.hpp>
 #include "MinHook.h"
 
@@ -210,9 +211,259 @@ std::queue<std::string> g_WebSocketQueue;
 std::mutex g_WebSocketQueueMutex;
 std::vector<SOCKET> g_WebSocketClients;
 std::mutex g_WebSocketClientsMutex;
+std::unordered_map<std::string, std::uintmax_t> g_FallbackLogOffsets;
+std::unordered_map<std::string, bool> g_FallbackLogReported;
+std::mutex g_FallbackLogOffsetsMutex;
+std::once_flag g_FallbackLogThreadFlag;
 bool g_IsRunning = true;
 
 std::string GetFormattedTimestamp();
+
+bool IsKnownBackendNoise(const std::string &line)
+{
+    std::string normalized = line;
+    std::transform(normalized.begin(), normalized.end(), normalized.begin(), [](unsigned char ch)
+                   { return static_cast<char>(std::tolower(ch)); });
+
+    static const std::vector<std::string> noisyPatterns = {
+        "connectivity test",
+        "ipv6 http connectivity test",
+        "ipv6 udp connectivity test",
+        "steamapi_init",
+        "steamapi fail",
+        "tried to access steam interface",
+        "s_api fail",
+        "authentication attempt",
+        "uploaded file",
+        "webserver started on http",
+        "generic module",
+        "amp is up to date",
+        "loaded steamcmdplugin",
+        "loaded rconplugin",
+        "system info/",
+        "core info/",
+        "system activity/",
+        "api:",
+        "modloader",
+        "paldefender",
+        "[s_api]",
+        "[system",
+        "[core",
+        "[generic",
+        "steam interface",
+        "game version is",
+        "version is v1.0.4.102642",
+        "running palworld dedicated server on"};
+
+    for (const auto &pattern : noisyPatterns)
+    {
+        if (normalized.find(pattern) != std::string::npos)
+            return true;
+    }
+
+    return false;
+}
+
+bool LooksLikeGameServerLogPath(const std::filesystem::path &path)
+{
+    std::string lowered = path.string();
+    std::transform(lowered.begin(), lowered.end(), lowered.begin(), [](unsigned char ch)
+                   { return static_cast<char>(std::tolower(ch)); });
+
+    static const std::vector<std::string> preferredSegments = {
+        "saved\\logs",
+        "saved/logs",
+        "palworldserver",
+        "palworldserver.exe",
+        "palserver",
+        "server_log_",
+        "palserverlogs",
+        "palserverlogs/config",
+        "palworld/logs",
+        "palworld/saved/logs",
+        "palworld\\saved\\logs",
+        "pal\\saved\\logs",
+        "pal/saved/logs"};
+
+    for (const auto &segment : preferredSegments)
+    {
+        if (lowered.find(segment) != std::string::npos)
+            return true;
+    }
+
+    return false;
+}
+
+std::vector<std::filesystem::path> FindFallbackLogFiles()
+{
+    std::vector<std::filesystem::path> candidates;
+
+    char modulePath[MAX_PATH] = {};
+    HMODULE thisModule = nullptr;
+    if (GetModuleHandleExA(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
+                           (LPCSTR)&FindFallbackLogFiles, &thisModule) &&
+        thisModule)
+    {
+        GetModuleFileNameA(thisModule, modulePath, MAX_PATH);
+    }
+
+    std::filesystem::path dllDir = std::filesystem::path(modulePath).parent_path();
+    std::vector<std::filesystem::path> roots;
+
+    if (!dllDir.empty())
+    {
+        roots.push_back(dllDir);
+        roots.push_back(dllDir / "logs");
+        roots.push_back(dllDir / "..");
+        roots.push_back(dllDir / ".." / "logs");
+        roots.push_back(dllDir / ".." / "..");
+        roots.push_back(dllDir / ".." / ".." / "logs");
+    }
+
+    char currentDir[MAX_PATH] = {};
+    if (GetCurrentDirectoryA(MAX_PATH, currentDir) > 0)
+    {
+        roots.push_back(std::filesystem::path(currentDir));
+        roots.push_back(std::filesystem::path(currentDir) / "logs");
+    }
+
+    std::vector<std::filesystem::path> seen;
+    for (const auto &root : roots)
+    {
+        std::error_code ec;
+        if (!std::filesystem::exists(root, ec))
+            continue;
+
+        std::filesystem::directory_options options = std::filesystem::directory_options::skip_permission_denied;
+        std::filesystem::recursive_directory_iterator it(root, options, ec);
+        std::filesystem::recursive_directory_iterator end;
+        for (; it != end; it.increment(ec))
+        {
+            if (ec)
+            {
+                ec.clear();
+                continue;
+            }
+
+            const auto &entry = *it;
+            if (!entry.is_regular_file(ec))
+                continue;
+
+            auto extension = entry.path().extension().string();
+            std::transform(extension.begin(), extension.end(), extension.begin(), [](unsigned char ch)
+                           { return static_cast<char>(std::tolower(ch)); });
+
+            std::string filename = entry.path().filename().string();
+            std::transform(filename.begin(), filename.end(), filename.begin(), [](unsigned char ch)
+                           { return static_cast<char>(std::tolower(ch)); });
+
+            bool isLogLike = extension == ".log" || extension == ".txt" || filename.find("log") != std::string::npos;
+            if (!isLogLike)
+                continue;
+
+            if (!LooksLikeGameServerLogPath(entry.path()))
+                continue;
+
+            bool alreadySeen = false;
+            for (const auto &existing : seen)
+            {
+                if (existing == entry.path())
+                {
+                    alreadySeen = true;
+                    break;
+                }
+            }
+            if (!alreadySeen)
+            {
+                seen.push_back(entry.path());
+            }
+        }
+    }
+
+    return seen;
+}
+
+void TailFallbackLogFile(const std::filesystem::path &logPath)
+{
+    std::error_code ec;
+    if (!std::filesystem::exists(logPath, ec) || !std::filesystem::is_regular_file(logPath, ec))
+        return;
+
+    {
+        std::lock_guard<std::mutex> lock(g_FallbackLogOffsetsMutex);
+        if (g_DebugHooks && g_FallbackLogReported.find(logPath.string()) == g_FallbackLogReported.end())
+        {
+            g_FallbackLogReported[logPath.string()] = true;
+            WriteToDashboardLog("[FALLBACK_LOG] watching candidate log file: " + logPath.string());
+        }
+    }
+
+    std::uintmax_t currentOffset = 0;
+    {
+        std::lock_guard<std::mutex> lock(g_FallbackLogOffsetsMutex);
+        auto it = g_FallbackLogOffsets.find(logPath.string());
+        if (it == g_FallbackLogOffsets.end())
+        {
+            currentOffset = std::filesystem::file_size(logPath, ec);
+            g_FallbackLogOffsets[logPath.string()] = currentOffset;
+            return;
+        }
+        currentOffset = it->second;
+    }
+
+    std::ifstream stream(logPath, std::ios::binary | std::ios::in);
+    if (!stream.is_open())
+        return;
+
+    stream.seekg(static_cast<std::streamoff>(currentOffset), std::ios::beg);
+    std::string buffer;
+    char chunk[4096];
+
+    while (stream.read(chunk, sizeof(chunk)) || stream.gcount() > 0)
+    {
+        buffer.append(chunk, static_cast<size_t>(stream.gcount()));
+    }
+
+    if (buffer.empty())
+        return;
+
+    std::string working = buffer;
+    std::string line;
+    std::stringstream lineStream(working);
+    while (std::getline(lineStream, line))
+    {
+        if (!line.empty() && line.back() == '\r')
+            line.pop_back();
+
+        if (!line.empty() && !IsKnownBackendNoise(line) &&
+            line.find("[info] Game version is") == std::string::npos &&
+            line.find("Running Palworld dedicated server on") == std::string::npos)
+            WriteToDashboardLog(line + "\n");
+    }
+
+    std::uintmax_t newSize = std::filesystem::file_size(logPath, ec);
+    std::lock_guard<std::mutex> lock(g_FallbackLogOffsetsMutex);
+    g_FallbackLogOffsets[logPath.string()] = newSize;
+}
+
+void FallbackLogTailThread()
+{
+    while (g_IsRunning)
+    {
+        std::vector<std::filesystem::path> logFiles = FindFallbackLogFiles();
+        for (const auto &logPath : logFiles)
+        {
+            TailFallbackLogFile(logPath);
+        }
+
+        std::this_thread::sleep_for(std::chrono::milliseconds(250));
+    }
+}
+
+void StartFallbackLogTailThread()
+{
+    std::thread(FallbackLogTailThread).detach();
+}
 
 std::string Base64Encode(const std::string &input)
 {
@@ -709,8 +960,9 @@ void InitializeLogEnvironment()
     ss << "server_log_" << safeTimestamp << ".log";
     g_LogFilePath = (logDir / ss.str()).string();
 
-    // Start background asynchronous disk-writer and websocket threads
+    // Start background asynchronous disk-writer, websocket, and fallback log tailers.
     std::thread(LogWriterThread).detach();
+    std::call_once(g_FallbackLogThreadFlag, StartFallbackLogTailThread);
     if (g_WebSocketEnabled)
     {
         std::thread(WebSocketServerThread).detach();
@@ -722,6 +974,30 @@ std::chrono::steady_clock::time_point g_LastAppendTime;
 
 std::string g_LineBuffer = "";
 std::chrono::steady_clock::time_point g_LastMessageTime = std::chrono::steady_clock::now();
+std::string g_LastLoggedLine = "";
+std::chrono::steady_clock::time_point g_LastLoggedLineTime = std::chrono::steady_clock::now();
+
+bool ShouldSkipDuplicateLogLine(const std::string &line)
+{
+    std::string normalized = line;
+    while (!normalized.empty() && normalized.back() == '\r')
+        normalized.pop_back();
+    while (!normalized.empty() && normalized.back() == '\n')
+        normalized.pop_back();
+
+    if (normalized.empty())
+        return true;
+
+    auto now = std::chrono::steady_clock::now();
+    auto elapsedMs = std::chrono::duration_cast<std::chrono::milliseconds>(now - g_LastLoggedLineTime).count();
+
+    if (normalized == g_LastLoggedLine && elapsedMs < 5000)
+        return true;
+
+    g_LastLoggedLine = normalized;
+    g_LastLoggedLineTime = now;
+    return false;
+}
 
 void WriteToDashboardLog(const std::string &message)
 {
@@ -756,7 +1032,7 @@ void WriteToDashboardLog(const std::string &message)
             singleLine.pop_back();
         }
 
-        if (!singleLine.empty())
+        if (!singleLine.empty() && !ShouldSkipDuplicateLogLine(singleLine))
         {
             std::ostringstream formattedLine;
             formattedLine << "[" << GetFormattedTimestamp() << "] " << singleLine;
@@ -768,10 +1044,13 @@ void WriteToDashboardLog(const std::string &message)
     // If the buffer gets too long without a newline, force flush it
     if (g_LineBuffer.length() > 256)
     {
-        std::ostringstream formattedLine;
-        formattedLine << "[" << GetFormattedTimestamp() << "] " << g_LineBuffer;
-        g_LogQueue.push(formattedLine.str());
-        QueueWebSocketLog(BuildWebSocketLogPayload(formattedLine.str()));
+        if (!ShouldSkipDuplicateLogLine(g_LineBuffer))
+        {
+            std::ostringstream formattedLine;
+            formattedLine << "[" << GetFormattedTimestamp() << "] " << g_LineBuffer;
+            g_LogQueue.push(formattedLine.str());
+            QueueWebSocketLog(BuildWebSocketLogPayload(formattedLine.str()));
+        }
         g_LineBuffer.clear();
     }
 }

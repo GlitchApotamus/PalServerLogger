@@ -6,12 +6,14 @@
 ![Static Badge](https://img.shields.io/badge/kofi-glitch-blue?style=plastic&logo=ko-fi&logoColor=blue&label=kofi&labelColor=purple&color=green&link=https%3A%2F%2Fko-fi.com%2Fglitchapotamus)
 
 # Description
-Because the native Palworld server discards log data upon exit, traditional logging methods often fail to capture the complete lifecycle of the server. This logger solves that by running a highly optimized dual-hook architecture that intercepts both the initial boot sequence and the Unreal Engine core logging system, outputting it cleanly to a session-based file.
+Because the native Palworld server discards log data upon exit, traditional logging methods often fail to capture the complete lifecycle of the server. This logger solves that by running a highly optimized hook architecture that captures console and debug output, writes it to session-based log files, and can stream the same log lines live over a websocket for bots and external tools.
 
 # Installation instructions
 Download, extract and drop both files into \Pal\Binaries\Win64.
 
-Restart the server and you will see a new folder "PalServerLogs" where you will find timestamped log files. A new one is generated every time your restart the server.
+Restart the server and you will see a new folder "PalServerLogs" where you will find timestamped log files. A new one is generated every time you restart the server.
+
+The mod also starts a websocket listener on port 8765 by default, so a Discord bot or monitoring script can keep a constant live connection to the server output without blocking the game thread.
 
 # Configuration & Translations
 On first boot, the mod loader automatically generates a `d3d9_config.json` file in your binaries directory. This file controls which DLLs are loaded and handles text localization.
@@ -56,7 +58,7 @@ See the project changelog in [CHANGELOG.md](CHANGELOG.md) for release notes and 
 
 ## Mod Configuration File
 
-On first boot, the mod automatically generates a logger_config.json file inside your PalServerLogs/config/ directory. You can edit this file to adjust file retention limits and customize timestamp outputs.
+On first boot, the mod automatically generates a logger_config.json file inside your PalServerLogs/config/ directory. You can edit this file to adjust file retention limits, customize timestamps, and control the live websocket stream.
 
 ### Available Settings:
 * `max_log_files` (Integer, Default: 5): <br>
@@ -65,24 +67,47 @@ Defines the maximum number of historical session log files to retain before auto
 Customizes the timestamp format prepended to every logged line and, by default, also controls the timestamp used in log filenames.
 * `filename_timestamp_format` (String, Optional):<br>
 Overrides only the filename timestamp format if you want line timestamps and file naming to use different formats. Invalid Windows filename characters are automatically replaced with `_`.
+* `websocket_enabled` (Boolean, Default: true):<br>
+Enables or disables the live websocket server used for external bots and monitoring tools.
+* `websocket_port` (Integer, Default: 8765):<br>
+Specifies which local port the websocket server will bind to.
+* `websocket_host` (String, Default: "0.0.0.0"):<br>
+Controls the bind address. Use `127.0.0.1` for local-only access or `0.0.0.0` to accept connections from other machines on the same network.
 <br><br>
 ```json
 {
     "max_log_files": 5,
     "timestamp_format": "%Y-%m-%d %H:%M:%S",
-    "filename_timestamp_format": "%Y%m%d_%H%M%S"
+    "filename_timestamp_format": "%Y%m%d_%H%M%S",
+    "websocket_enabled": true,
+    "websocket_port": 8765,
+    "websocket_host": "0.0.0.0"
 }
 ```
 
-If an existing `logger_config.json` is missing any supported fields, the mod will automatically add the missing values on startup and keep the user's current settings intact. This means you do not have to delete the file just to get new defaults such as `filename_timestamp_format`.
+If an existing `logger_config.json` is missing any supported fields, the mod will automatically add the missing values on startup and keep the user's current settings intact. This means you do not have to delete the file just to get new defaults such as `filename_timestamp_format` or the websocket settings.
 
 # Main features
 
 * **Zero-Config Injection:** Uses a professional DLL Proxy (`d3d9.dll`) to auto-load mods when the server starts.
 * **Auto-Discovery:** Automatically generates configuration files on first boot if they are missing.
 * **Localization Support:** Fully configurable input/output translation mapping via `d3d9_config.json` for custom languages and text strings.
-* **Streamlined Logging:** Includes real-time, color-coded console feedback, allowing you to monitor mod status directly from the server terminal.
-* **Stable Architecture:** Built with thread-safe injection to prevent server crashes and boot-time deadlocks.
+* **Streamlined Logging:** Captures game and console output from multiple Windows logging paths and writes it cleanly to a session-based file.
+* **Live Websocket Feed:** Opens a dedicated websocket server so a Discord bot or other script can maintain a constant connection and receive new log lines in real time.
+* **Async Background Threading:** Writes files and broadcasts websocket messages on background threads so the game/server loop is not blocked by disk I/O or socket traffic.
+* **Automatic Rotation:** Keeps only the newest configured log files and deletes older ones automatically.
+* **Stable Architecture:** Built with thread-safe queueing and injection logic to prevent server crashes and boot-time deadlocks.
+
+# Websocket payload format
+
+When a client is connected, the mod sends a status frame and then one JSON log event per message:
+
+```json
+{"type":"status","message":"PalServerLogger websocket connected"}
+{"type":"log","message":"[2026-09-07 19:56:14] [ModLoader]: [SUCCESS] Injected PalDefender.dll"}
+```
+
+The websocket runs independently from the main game loop, which keeps the server responsive while external bots stay connected.
 
 # Requirements
 

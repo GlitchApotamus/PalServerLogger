@@ -270,6 +270,9 @@ bool LooksLikeGameServerLogPath(const std::filesystem::path &path)
     std::transform(lowered.begin(), lowered.end(), lowered.begin(), [](unsigned char ch)
                    { return static_cast<char>(std::tolower(ch)); });
 
+    if (lowered.find("palserverlogs") != std::string::npos)
+        return false;
+
     static const std::vector<std::string> preferredSegments = {
         "saved\\logs",
         "saved/logs",
@@ -277,8 +280,6 @@ bool LooksLikeGameServerLogPath(const std::filesystem::path &path)
         "palworldserver.exe",
         "palserver",
         "server_log_",
-        "palserverlogs",
-        "palserverlogs/config",
         "palworld/logs",
         "palworld/saved/logs",
         "palworld\\saved\\logs",

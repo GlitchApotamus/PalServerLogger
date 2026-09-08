@@ -212,6 +212,12 @@ DWORD WINAPI ChainLoadDLLs(LPVOID lpParam)
             changed = true;
         }
 
+        if (target.contains("translations") && target["translations"].is_object() && target["translations"].contains("load_dlls"))
+        {
+            target["translations"].erase("load_dlls");
+            changed = true;
+        }
+
         return changed;
     };
 
@@ -254,6 +260,12 @@ DWORD WINAPI ChainLoadDLLs(LPVOID lpParam)
     else if (!g_config["load_dlls"].is_array())
     {
         g_config["load_dlls"] = json::array();
+        configUpdated = true;
+    }
+
+    if (g_config.contains("translations") && g_config["translations"].is_object() && g_config["translations"].contains("load_dlls"))
+    {
+        g_config["translations"].erase("load_dlls");
         configUpdated = true;
     }
 

@@ -18,6 +18,8 @@
 #include <nlohmann/json.hpp>
 #include "MinHook.h"
 
+void WriteToDashboardLog(const std::string &message);
+
 using json = nlohmann::json;
 
 typedef BOOL(WINAPI *tWriteConsoleA)(HANDLE, const VOID *, DWORD, LPDWORD, LPVOID);
@@ -39,6 +41,80 @@ std::string g_FileTimestampFormat = "%Y%m%d_%H%M%S";
 int g_WebSocketPort = 8765;
 std::string g_WebSocketHost = "0.0.0.0";
 bool g_WebSocketEnabled = true;
+bool g_DebugHooks = false;
+
+std::string MinHookStatusToString(MH_STATUS status)
+{
+    switch (status)
+    {
+    case MH_OK:
+        return "MH_OK";
+    case MH_ERROR_ALREADY_INITIALIZED:
+        return "MH_ERROR_ALREADY_INITIALIZED";
+    case MH_ERROR_NOT_INITIALIZED:
+        return "MH_ERROR_NOT_INITIALIZED";
+    case MH_ERROR_ALREADY_CREATED:
+        return "MH_ERROR_ALREADY_CREATED";
+    case MH_ERROR_NOT_CREATED:
+        return "MH_ERROR_NOT_CREATED";
+    case MH_ERROR_ENABLED:
+        return "MH_ERROR_ENABLED";
+    case MH_ERROR_DISABLED:
+        return "MH_ERROR_DISABLED";
+    case MH_ERROR_NOT_EXECUTABLE:
+        return "MH_ERROR_NOT_EXECUTABLE";
+    case MH_ERROR_UNSUPPORTED_FUNCTION:
+        return "MH_ERROR_UNSUPPORTED_FUNCTION";
+    case MH_ERROR_MEMORY_ALLOC:
+        return "MH_ERROR_MEMORY_ALLOC";
+    case MH_ERROR_MEMORY_PROTECT:
+        return "MH_ERROR_MEMORY_PROTECT";
+    case MH_ERROR_MODULE_NOT_FOUND:
+        return "MH_ERROR_MODULE_NOT_FOUND";
+    case MH_ERROR_FUNCTION_NOT_FOUND:
+        return "MH_ERROR_FUNCTION_NOT_FOUND";
+    default:
+        return "MH_UNKNOWN";
+    }
+}
+
+void TraceHookCall(const std::string &name)
+{
+    if (!g_DebugHooks)
+        return;
+
+    static bool writeConsoleACalled = false;
+    static bool writeConsoleWCalled = false;
+    static bool writeFileCalled = false;
+    static bool outputDebugA = false;
+    static bool outputDebugW = false;
+
+    if (name == "WriteConsoleA" && !writeConsoleACalled)
+    {
+        WriteToDashboardLog("[HOOK_DEBUG] WriteConsoleA callback fired");
+        writeConsoleACalled = true;
+    }
+    else if (name == "WriteConsoleW" && !writeConsoleWCalled)
+    {
+        WriteToDashboardLog("[HOOK_DEBUG] WriteConsoleW callback fired");
+        writeConsoleWCalled = true;
+    }
+    else if (name == "WriteFile" && !writeFileCalled)
+    {
+        WriteToDashboardLog("[HOOK_DEBUG] WriteFile callback fired");
+        writeFileCalled = true;
+    }
+    else if (name == "OutputDebugStringA" && !outputDebugA)
+    {
+        WriteToDashboardLog("[HOOK_DEBUG] OutputDebugStringA callback fired");
+        outputDebugA = true;
+    }
+    else if (name == "OutputDebugStringW" && !outputDebugW)
+    {
+        WriteToDashboardLog("[HOOK_DEBUG] OutputDebugStringW callback fired");
+        outputDebugW = true;
+    }
+}
 
 std::string BuildWebSocketLogPayload(const std::string &message)
 {
@@ -437,7 +513,8 @@ void InitializeLogEnvironment()
         {"filename_timestamp_format", "%Y%m%d_%H%M%S"},
         {"websocket_enabled", true},
         {"websocket_port", 8765},
-        {"websocket_host", "0.0.0.0"}};
+        {"websocket_host", "0.0.0.0"},
+        {"debug_hooks", false}};
 
     bool configModified = false;
     json config;
@@ -496,6 +573,8 @@ void InitializeLogEnvironment()
             g_WebSocketPort = config["websocket_port"];
         if (config.contains("websocket_host"))
             g_WebSocketHost = config["websocket_host"];
+        if (config.contains("debug_hooks"))
+            g_DebugHooks = config["debug_hooks"];
     }
     catch (...)
     {
@@ -609,6 +688,7 @@ void WriteToDashboardLog(const std::string &message)
 
 BOOL WINAPI Hooked_WriteConsoleA(HANDLE hConsoleOutput, const VOID *lpBuffer, DWORD nNumberOfCharsToWrite, LPDWORD lpNumberOfCharsWritten, LPVOID lpReserved)
 {
+    TraceHookCall("WriteConsoleA");
     if (lpBuffer && nNumberOfCharsToWrite > 0)
     {
         std::string ansiString(static_cast<const char *>(lpBuffer), nNumberOfCharsToWrite);
@@ -619,6 +699,7 @@ BOOL WINAPI Hooked_WriteConsoleA(HANDLE hConsoleOutput, const VOID *lpBuffer, DW
 
 BOOL WINAPI Hooked_WriteConsoleW(HANDLE hConsoleOutput, const VOID *lpBuffer, DWORD nNumberOfCharsToWrite, LPDWORD lpNumberOfCharsWritten, LPVOID lpReserved)
 {
+    TraceHookCall("WriteConsoleW");
     if (lpBuffer && nNumberOfCharsToWrite > 0)
     {
         int size_needed = WideCharToMultiByte(CP_UTF8, 0, (LPCWCH)lpBuffer, nNumberOfCharsToWrite, NULL, 0, NULL, NULL);
@@ -634,6 +715,7 @@ BOOL WINAPI Hooked_WriteConsoleW(HANDLE hConsoleOutput, const VOID *lpBuffer, DW
 
 BOOL WINAPI Hooked_WriteFile(HANDLE hFile, LPCVOID lpBuffer, DWORD nNumberOfBytesToWrite, LPDWORD lpNumberOfBytesWritten, LPOVERLAPPED lpOverlapped)
 {
+    TraceHookCall("WriteFile");
     if (hFile == GetStdHandle(STD_OUTPUT_HANDLE) || hFile == GetStdHandle(STD_ERROR_HANDLE) || GetFileType(hFile) == FILE_TYPE_CHAR)
     {
         if (lpBuffer && nNumberOfBytesToWrite > 0)
@@ -647,6 +729,7 @@ BOOL WINAPI Hooked_WriteFile(HANDLE hFile, LPCVOID lpBuffer, DWORD nNumberOfByte
 
 void WINAPI Hooked_OutputDebugStringA(LPCSTR lpOutputString)
 {
+    TraceHookCall("OutputDebugStringA");
     if (lpOutputString)
         WriteToDashboardLog(std::string(lpOutputString));
 
@@ -656,6 +739,7 @@ void WINAPI Hooked_OutputDebugStringA(LPCSTR lpOutputString)
 
 void WINAPI Hooked_OutputDebugStringW(LPCWSTR lpOutputString)
 {
+    TraceHookCall("OutputDebugStringW");
     if (lpOutputString)
     {
         int size_needed = WideCharToMultiByte(CP_UTF8, 0, lpOutputString, -1, NULL, 0, NULL, NULL);
@@ -674,7 +758,11 @@ void WINAPI Hooked_OutputDebugStringW(LPCWSTR lpOutputString)
 DWORD WINAPI InitializeConsoleHooks(LPVOID lpParam)
 {
     InitializeLogEnvironment();
-    if (MH_Initialize() != MH_OK)
+
+    MH_STATUS initStatus = MH_Initialize();
+    if (g_DebugHooks)
+        WriteToDashboardLog("[HOOK_DEBUG] MH_Initialize => " + MinHookStatusToString(initStatus));
+    if (initStatus != MH_OK)
         return 1;
 
     HMODULE hKernelBase = GetModuleHandleA("kernelbase.dll");
@@ -688,17 +776,39 @@ DWORD WINAPI InitializeConsoleHooks(LPVOID lpParam)
     LPVOID pTargetOutputDebugStringW = (LPVOID)GetProcAddress(GetModuleHandleA("kernel32.dll"), "OutputDebugStringW");
 
     if (pTargetWriteConsoleA)
-        MH_CreateHook(pTargetWriteConsoleA, &Hooked_WriteConsoleA, reinterpret_cast<LPVOID *>(&pOriginalWriteConsoleA));
+    {
+        MH_STATUS status = MH_CreateHook(pTargetWriteConsoleA, &Hooked_WriteConsoleA, reinterpret_cast<LPVOID *>(&pOriginalWriteConsoleA));
+        if (g_DebugHooks)
+            WriteToDashboardLog("[HOOK_DEBUG] MH_CreateHook WriteConsoleA => " + MinHookStatusToString(status));
+    }
     if (pTargetWriteConsoleW)
-        MH_CreateHook(pTargetWriteConsoleW, &Hooked_WriteConsoleW, reinterpret_cast<LPVOID *>(&pOriginalWriteConsoleW));
+    {
+        MH_STATUS status = MH_CreateHook(pTargetWriteConsoleW, &Hooked_WriteConsoleW, reinterpret_cast<LPVOID *>(&pOriginalWriteConsoleW));
+        if (g_DebugHooks)
+            WriteToDashboardLog("[HOOK_DEBUG] MH_CreateHook WriteConsoleW => " + MinHookStatusToString(status));
+    }
     if (pTargetWriteFile)
-        MH_CreateHook(pTargetWriteFile, &Hooked_WriteFile, reinterpret_cast<LPVOID *>(&pOriginalWriteFile));
+    {
+        MH_STATUS status = MH_CreateHook(pTargetWriteFile, &Hooked_WriteFile, reinterpret_cast<LPVOID *>(&pOriginalWriteFile));
+        if (g_DebugHooks)
+            WriteToDashboardLog("[HOOK_DEBUG] MH_CreateHook WriteFile => " + MinHookStatusToString(status));
+    }
     if (pTargetOutputDebugStringA)
-        MH_CreateHook(pTargetOutputDebugStringA, &Hooked_OutputDebugStringA, reinterpret_cast<LPVOID *>(&pOriginalOutputDebugStringA));
+    {
+        MH_STATUS status = MH_CreateHook(pTargetOutputDebugStringA, &Hooked_OutputDebugStringA, reinterpret_cast<LPVOID *>(&pOriginalOutputDebugStringA));
+        if (g_DebugHooks)
+            WriteToDashboardLog("[HOOK_DEBUG] MH_CreateHook OutputDebugStringA => " + MinHookStatusToString(status));
+    }
     if (pTargetOutputDebugStringW)
-        MH_CreateHook(pTargetOutputDebugStringW, &Hooked_OutputDebugStringW, reinterpret_cast<LPVOID *>(&pOriginalOutputDebugStringW));
+    {
+        MH_STATUS status = MH_CreateHook(pTargetOutputDebugStringW, &Hooked_OutputDebugStringW, reinterpret_cast<LPVOID *>(&pOriginalOutputDebugStringW));
+        if (g_DebugHooks)
+            WriteToDashboardLog("[HOOK_DEBUG] MH_CreateHook OutputDebugStringW => " + MinHookStatusToString(status));
+    }
 
-    MH_EnableHook(MH_ALL_HOOKS);
+    MH_STATUS enableStatus = MH_EnableHook(MH_ALL_HOOKS);
+    if (g_DebugHooks)
+        WriteToDashboardLog("[HOOK_DEBUG] MH_EnableHook => " + MinHookStatusToString(enableStatus));
     return 0;
 }
 

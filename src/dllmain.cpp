@@ -39,9 +39,85 @@ int g_MaxLogs = 5;
 std::string g_TimestampFormat = "%Y-%m-%d %H:%M:%S";
 std::string g_FileTimestampFormat = "%Y%m%d_%H%M%S";
 int g_WebSocketPort = 8765;
-std::string g_WebSocketHost = "0.0.0.0";
+std::string g_WebSocketHost = "127.0.0.1";
 bool g_WebSocketEnabled = true;
 bool g_DebugHooks = false;
+std::string g_WebSocketSecret = "change-me-to-a-long-random-secret";
+
+std::string TrimString(const std::string &value)
+{
+    const std::string whitespace = " \t\r\n";
+    size_t start = value.find_first_not_of(whitespace);
+    if (start == std::string::npos)
+        return "";
+
+    size_t end = value.find_last_not_of(whitespace);
+    return value.substr(start, end - start + 1);
+}
+
+std::string ExtractWebSocketToken(const std::string &request)
+{
+    std::string lowerRequest = request;
+    std::transform(lowerRequest.begin(), lowerRequest.end(), lowerRequest.begin(), [](unsigned char ch)
+                   { return static_cast<char>(std::tolower(ch)); });
+
+    auto findTokenInHeader = [&](const std::string &headerName) -> std::string
+    {
+        std::string header = headerName + ":";
+        std::string lowerHeader = header;
+        std::transform(lowerHeader.begin(), lowerHeader.end(), lowerHeader.begin(), [](unsigned char ch)
+                       { return static_cast<char>(std::tolower(ch)); });
+
+        size_t pos = lowerRequest.find(lowerHeader);
+        if (pos == std::string::npos)
+            return "";
+
+        size_t valueStart = pos + header.length();
+        size_t valueEnd = request.find("\r\n", valueStart);
+        if (valueEnd == std::string::npos)
+            valueEnd = request.size();
+
+        std::string value = request.substr(valueStart, valueEnd - valueStart);
+        value = TrimString(value);
+        if (value.rfind("Bearer ", 0) == 0)
+            value = value.substr(7);
+        return TrimString(value);
+    };
+
+    std::string token = findTokenInHeader("Authorization");
+    if (!token.empty())
+        return token;
+
+    const std::string queryTokens[] = {"token=", "auth=", "secret="};
+    for (const auto &queryToken : queryTokens)
+    {
+        std::string lowerQueryToken = queryToken;
+        std::transform(lowerQueryToken.begin(), lowerQueryToken.end(), lowerQueryToken.begin(), [](unsigned char ch)
+                       { return static_cast<char>(std::tolower(ch)); });
+
+        size_t pos = lowerRequest.find(lowerQueryToken);
+        if (pos == std::string::npos)
+            continue;
+
+        size_t valueStart = pos + queryToken.length();
+        size_t valueEnd = request.find_first_of("& \r\n", valueStart);
+        if (valueEnd == std::string::npos)
+            valueEnd = request.size();
+
+        return TrimString(request.substr(valueStart, valueEnd - valueStart));
+    }
+
+    return "";
+}
+
+bool IsWebSocketAuthorized(const std::string &request)
+{
+    if (g_WebSocketSecret.empty())
+        return false;
+
+    std::string suppliedToken = ExtractWebSocketToken(request);
+    return !suppliedToken.empty() && suppliedToken == g_WebSocketSecret;
+}
 
 std::string MinHookStatusToString(MH_STATUS status)
 {
@@ -388,6 +464,17 @@ void WebSocketServerThread()
         auto keyPos = request.find("Sec-WebSocket-Key:");
         if (keyPos != std::string::npos)
         {
+            if (!IsWebSocketAuthorized(request))
+            {
+                std::string unauthorized = "HTTP/1.1 401 Unauthorized\r\n"
+                                           "Content-Type: text/plain\r\n"
+                                           "Content-Length: 0\r\n"
+                                           "Connection: close\r\n\r\n";
+                send(clientSocket, unauthorized.c_str(), static_cast<int>(unauthorized.size()), 0);
+                closesocket(clientSocket);
+                continue;
+            }
+
             auto lineEnd = request.find("\r\n", keyPos);
             std::string keyLine = request.substr(keyPos, lineEnd - keyPos);
             auto colonPos = keyLine.find(':');
@@ -513,7 +600,8 @@ void InitializeLogEnvironment()
         {"filename_timestamp_format", "%Y%m%d_%H%M%S"},
         {"websocket_enabled", true},
         {"websocket_port", 8765},
-        {"websocket_host", "0.0.0.0"},
+        {"websocket_host", "127.0.0.1"},
+        {"websocket_secret", "change-me-to-a-long-random-secret"},
         {"debug_hooks", false}};
 
     bool configModified = false;
@@ -573,6 +661,8 @@ void InitializeLogEnvironment()
             g_WebSocketPort = config["websocket_port"];
         if (config.contains("websocket_host"))
             g_WebSocketHost = config["websocket_host"];
+        if (config.contains("websocket_secret"))
+            g_WebSocketSecret = config["websocket_secret"];
         if (config.contains("debug_hooks"))
             g_DebugHooks = config["debug_hooks"];
     }

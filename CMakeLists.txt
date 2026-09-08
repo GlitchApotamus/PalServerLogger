@@ -39,7 +39,7 @@ FetchContent_MakeAvailable(json)
 
 # 3. Target 1: The Logger Logic
 add_library(PalServerLogger SHARED src/dllmain.cpp)
-target_link_libraries(PalServerLogger PRIVATE minhook nlohmann_json::nlohmann_json)
+target_link_libraries(PalServerLogger PRIVATE minhook nlohmann_json::nlohmann_json ws2_32 advapi32)
 target_include_directories(PalServerLogger PRIVATE ${minhook_SOURCE_DIR}/include)
 
 # 4. Target 2: The d3d9 Proxy Chain-Loader

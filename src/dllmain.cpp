@@ -18,6 +18,7 @@
 #include <unordered_map>
 #include <nlohmann/json.hpp>
 #include "MinHook.h"
+#include <cstdio>
 
 void WriteToDashboardLog(const std::string &message);
 
@@ -54,6 +55,57 @@ std::string TrimString(const std::string &value)
 
     size_t end = value.find_last_not_of(whitespace);
     return value.substr(start, end - start + 1);
+}
+
+std::string GenerateWebSocketSecret()
+{
+    std::string secret;
+
+    FILE *wherePipe = _popen("where openssl 2>nul", "r");
+    if (wherePipe)
+    {
+        char buffer[4096];
+        if (fgets(buffer, sizeof(buffer), wherePipe) != nullptr)
+        {
+            std::string opensslPath = TrimString(buffer);
+            if (!opensslPath.empty())
+            {
+                std::string command = "\"" + opensslPath + "\" rand -base64 48";
+                FILE *randPipe = _popen(command.c_str(), "r");
+                if (randPipe)
+                {
+                    char value[512];
+                    if (fgets(value, sizeof(value), randPipe) != nullptr)
+                    {
+                        secret = TrimString(value);
+                    }
+                    _pclose(randPipe);
+                }
+            }
+        }
+        _pclose(wherePipe);
+    }
+
+    if (!secret.empty())
+        return secret;
+
+    BYTE randomBytes[48];
+    HCRYPTPROV provider = 0;
+    if (CryptAcquireContextA(&provider, NULL, NULL, PROV_RSA_FULL, CRYPT_VERIFYCONTEXT) || GetLastError() == NTE_EXISTS)
+    {
+        if (CryptGenRandom(provider, sizeof(randomBytes), randomBytes))
+        {
+            std::ostringstream oss;
+            for (BYTE byte : randomBytes)
+            {
+                oss << std::hex << std::setw(2) << std::setfill('0') << static_cast<int>(byte);
+            }
+            secret = oss.str();
+        }
+        CryptReleaseContext(provider, 0);
+    }
+
+    return secret.empty() ? "change-me-to-a-long-random-secret" : secret;
 }
 
 std::string ExtractWebSocketToken(const std::string &request)
@@ -240,20 +292,24 @@ bool IsKnownBackendNoise(const std::string &line)
         "amp is up to date",
         "loaded steamcmdplugin",
         "loaded rconplugin",
+        "setting breakpad minidump appid",
         "system info/",
         "core info/",
         "system activity/",
         "api:",
         "modloader",
-        "paldefender",
+        "paldefender anti cheat",
+        "paldefender wiki:",
+        "rest api started on port",
         "[s_api]",
         "[system",
         "[core",
         "[generic",
         "steam interface",
-        "game version is",
-        "version is v1.0.4.102642",
-        "running palworld dedicated server on"};
+        "steamcmdplugin",
+        "rconplugin",
+        "failed to access steam interface",
+        "loading steam interface"};
 
     for (const auto &pattern : noisyPatterns)
     {
@@ -270,12 +326,17 @@ bool LooksLikeGameServerLogPath(const std::filesystem::path &path)
     std::transform(lowered.begin(), lowered.end(), lowered.begin(), [](unsigned char ch)
                    { return static_cast<char>(std::tolower(ch)); });
 
-    if (lowered.find("palserverlogs") != std::string::npos)
+    if (lowered.find("palserverlogs") != std::string::npos || lowered.find("palserverlogger") != std::string::npos)
+        return false;
+
+    if (lowered.find("\\config\\") != std::string::npos || lowered.find("/config/") != std::string::npos)
         return false;
 
     static const std::vector<std::string> preferredSegments = {
         "saved\\logs",
         "saved/logs",
+        "saved\\logs\\",
+        "saved/logs/",
         "palworldserver",
         "palworldserver.exe",
         "palserver",
@@ -284,7 +345,13 @@ bool LooksLikeGameServerLogPath(const std::filesystem::path &path)
         "palworld/saved/logs",
         "palworld\\saved\\logs",
         "pal\\saved\\logs",
-        "pal/saved/logs"};
+        "pal/saved/logs",
+        "pal\\saved\\logs\\",
+        "pal/saved/logs/",
+        "saved\\logs\\server",
+        "saved/logs/server",
+        "palserverlogs",
+        "palserver/logs"};
 
     for (const auto &segment : preferredSegments)
     {
@@ -313,19 +380,32 @@ std::vector<std::filesystem::path> FindFallbackLogFiles()
 
     if (!dllDir.empty())
     {
+        std::filesystem::path parent1 = dllDir / "..";
+        std::filesystem::path parent2 = parent1 / "..";
+        std::filesystem::path parent3 = parent2 / "..";
+
         roots.push_back(dllDir);
         roots.push_back(dllDir / "logs");
-        roots.push_back(dllDir / "..");
-        roots.push_back(dllDir / ".." / "logs");
-        roots.push_back(dllDir / ".." / "..");
-        roots.push_back(dllDir / ".." / ".." / "logs");
+        roots.push_back(parent1);
+        roots.push_back(parent1 / "logs");
+        roots.push_back(parent2);
+        roots.push_back(parent2 / "logs");
+        roots.push_back(parent2 / "Saved");
+        roots.push_back(parent2 / "Saved" / "Logs");
+        roots.push_back(parent3);
+        roots.push_back(parent3 / "logs");
+        roots.push_back(parent3 / "Saved");
+        roots.push_back(parent3 / "Saved" / "Logs");
     }
 
     char currentDir[MAX_PATH] = {};
     if (GetCurrentDirectoryA(MAX_PATH, currentDir) > 0)
     {
-        roots.push_back(std::filesystem::path(currentDir));
-        roots.push_back(std::filesystem::path(currentDir) / "logs");
+        std::filesystem::path cwd(currentDir);
+        roots.push_back(cwd);
+        roots.push_back(cwd / "logs");
+        roots.push_back(cwd / "Saved");
+        roots.push_back(cwd / "Saved" / "Logs");
     }
 
     std::vector<std::filesystem::path> seen;
@@ -360,6 +440,12 @@ std::vector<std::filesystem::path> FindFallbackLogFiles()
 
             bool isLogLike = extension == ".log" || extension == ".txt" || filename.find("log") != std::string::npos;
             if (!isLogLike)
+                continue;
+
+            std::string pathLower = entry.path().string();
+            std::transform(pathLower.begin(), pathLower.end(), pathLower.begin(), [](unsigned char ch)
+                           { return static_cast<char>(std::tolower(ch)); });
+            if (pathLower.find("palserverlogger") != std::string::npos || pathLower.find("\\config\\") != std::string::npos || pathLower.find("/config/") != std::string::npos)
                 continue;
 
             if (!LooksLikeGameServerLogPath(entry.path()))
@@ -436,9 +522,7 @@ void TailFallbackLogFile(const std::filesystem::path &logPath)
         if (!line.empty() && line.back() == '\r')
             line.pop_back();
 
-        if (!line.empty() && !IsKnownBackendNoise(line) &&
-            line.find("[info] Game version is") == std::string::npos &&
-            line.find("Running Palworld dedicated server on") == std::string::npos)
+        if (!line.empty() && !IsKnownBackendNoise(line))
             WriteToDashboardLog(line + "\n");
     }
 
@@ -675,7 +759,9 @@ void WebSocketServerThread()
         return;
     }
 
-    EmitWebSocketDebug("server started on ws://" + g_WebSocketHost + ":" + std::to_string(g_WebSocketPort));
+    std::string startupWebSocketUrl = "ws://" + g_WebSocketHost + ":" + std::to_string(g_WebSocketPort);
+    WriteToDashboardLog("[WEBSOCKET] listening on " + startupWebSocketUrl);
+    EmitWebSocketDebug("server started on " + startupWebSocketUrl);
 
     while (g_IsRunning)
     {
@@ -827,6 +913,57 @@ void LogWriterThread()
     }
 }
 
+void MigrateLegacyPalServerLoggerFolder(const std::filesystem::path &legacyLogDir, const std::filesystem::path &newLogDir)
+{
+    if (!std::filesystem::exists(legacyLogDir) || legacyLogDir == newLogDir)
+        return;
+
+    std::filesystem::create_directories(newLogDir);
+
+    std::filesystem::path legacyConfigFile = legacyLogDir / "config" / "logger_config.json";
+    std::filesystem::path migratedConfigFile = newLogDir / "Config.json";
+    if (std::filesystem::exists(legacyConfigFile) && !std::filesystem::exists(migratedConfigFile))
+    {
+        std::error_code copyError;
+        std::filesystem::copy_file(legacyConfigFile, migratedConfigFile, std::filesystem::copy_options::overwrite_existing, copyError);
+    }
+
+    std::error_code iteratorError;
+    std::filesystem::recursive_directory_iterator it(legacyLogDir, std::filesystem::directory_options::skip_permission_denied, iteratorError);
+    std::filesystem::recursive_directory_iterator end;
+
+    for (; it != end; it.increment(iteratorError))
+    {
+        if (iteratorError)
+        {
+            iteratorError.clear();
+            continue;
+        }
+
+        const std::filesystem::path currentPath = it->path();
+        std::filesystem::path relativePath = std::filesystem::relative(currentPath, legacyLogDir);
+        if (relativePath.empty())
+            continue;
+
+        std::string relativeString = relativePath.generic_string();
+        if (relativeString == "config" || relativeString.rfind("config/", 0) == 0 || relativeString.rfind("config\\", 0) == 0)
+            continue;
+
+        std::filesystem::path targetPath = newLogDir / relativePath;
+        if (it->is_directory())
+        {
+            std::filesystem::create_directories(targetPath);
+            continue;
+        }
+
+        std::error_code copyError;
+        std::filesystem::copy_file(currentPath, targetPath, std::filesystem::copy_options::overwrite_existing, copyError);
+    }
+
+    std::error_code removeError;
+    std::filesystem::remove_all(legacyLogDir, removeError);
+}
+
 // 1. Initialize Log Environment with Auto-Config, Rotation, and Timestamp Format
 void InitializeLogEnvironment()
 {
@@ -837,14 +974,14 @@ void InitializeLogEnvironment()
     GetModuleFileNameA(hModule, path, sizeof(path));
 
     std::filesystem::path dllPath(path);
-    std::filesystem::path logDir = dllPath.parent_path() / "PalServerLogs";
-    std::filesystem::path configDir = logDir / "config";
-    std::filesystem::path configPath = configDir / "logger_config.json";
+    std::filesystem::path legacyLogDir = dllPath.parent_path() / "PalServerLogs";
+    std::filesystem::path logDir = dllPath.parent_path() / "PalServerLogger";
+    std::filesystem::path configPath = logDir / "Config.json";
+
+    MigrateLegacyPalServerLoggerFolder(legacyLogDir, logDir);
 
     if (!std::filesystem::exists(logDir))
         std::filesystem::create_directory(logDir);
-    if (!std::filesystem::exists(configDir))
-        std::filesystem::create_directory(configDir);
 
     json defaultJson = {
         {"max_log_files", 5},
@@ -852,8 +989,8 @@ void InitializeLogEnvironment()
         {"filename_timestamp_format", "%Y%m%d_%H%M%S"},
         {"websocket_enabled", true},
         {"websocket_port", 8765},
-        {"websocket_host", "127.0.0.1"},
-        {"websocket_secret", "change-me-to-a-long-random-secret"},
+        {"websocket_host", "0.0.0.0"},
+        {"websocket_secret", GenerateWebSocketSecret()},
         {"debug_hooks", false}};
 
     bool configModified = false;
@@ -879,6 +1016,15 @@ void InitializeLogEnvironment()
                     config[it.key()] = it.value();
                     configModified = true;
                 }
+                else if (it.key() == "websocket_secret")
+                {
+                    const std::string currentSecret = config["websocket_secret"].is_string() ? config["websocket_secret"].get<std::string>() : "";
+                    if (currentSecret.empty() || currentSecret == "change-me-to-a-long-random-secret")
+                    {
+                        config["websocket_secret"] = GenerateWebSocketSecret();
+                        configModified = true;
+                    }
+                }
             }
         }
         catch (...)
@@ -894,6 +1040,11 @@ void InitializeLogEnvironment()
         if (defaultConfig.is_open())
         {
             defaultConfig << config.dump(4);
+        }
+
+        if (config.contains("websocket_secret"))
+        {
+            WriteToDashboardLog("[WEBSOCKET] generated a new websocket secret and saved it to " + configPath.string());
         }
     }
 
@@ -977,6 +1128,7 @@ std::string g_LineBuffer = "";
 std::chrono::steady_clock::time_point g_LastMessageTime = std::chrono::steady_clock::now();
 std::string g_LastLoggedLine = "";
 std::chrono::steady_clock::time_point g_LastLoggedLineTime = std::chrono::steady_clock::now();
+std::unordered_map<std::string, std::chrono::steady_clock::time_point> g_RecentLogLines;
 
 bool ShouldSkipDuplicateLogLine(const std::string &line)
 {
@@ -989,14 +1141,41 @@ bool ShouldSkipDuplicateLogLine(const std::string &line)
     if (normalized.empty())
         return true;
 
+    std::string compact = normalized;
+    std::replace(compact.begin(), compact.end(), '\t', ' ');
+    while (compact.find("  ") != std::string::npos)
+        compact.erase(compact.find("  "), 1);
+
     auto now = std::chrono::steady_clock::now();
     auto elapsedMs = std::chrono::duration_cast<std::chrono::milliseconds>(now - g_LastLoggedLineTime).count();
 
-    if (normalized == g_LastLoggedLine && elapsedMs < 5000)
+    if (compact == g_LastLoggedLine && elapsedMs < 1000)
         return true;
 
-    g_LastLoggedLine = normalized;
+    if (compact.rfind("[WEBSOCKET]", 0) == 0 || compact.rfind("[FALLBACK_LOG]", 0) == 0)
+        return true;
+
+    auto recentIt = g_RecentLogLines.find(compact);
+    if (recentIt != g_RecentLogLines.end())
+    {
+        auto recentElapsedMs = std::chrono::duration_cast<std::chrono::milliseconds>(now - recentIt->second).count();
+        if (recentElapsedMs < 1000)
+            return true;
+    }
+
+    g_LastLoggedLine = compact;
     g_LastLoggedLineTime = now;
+    g_RecentLogLines[compact] = now;
+
+    for (auto it = g_RecentLogLines.begin(); it != g_RecentLogLines.end();)
+    {
+        auto ageMs = std::chrono::duration_cast<std::chrono::milliseconds>(now - it->second).count();
+        if (ageMs > 15000)
+            it = g_RecentLogLines.erase(it);
+        else
+            ++it;
+    }
+
     return false;
 }
 

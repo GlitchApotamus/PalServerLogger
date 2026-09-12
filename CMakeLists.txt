@@ -38,9 +38,14 @@ FetchContent_Declare(json GIT_REPOSITORY https://github.com/nlohmann/json.git GI
 FetchContent_MakeAvailable(json)
 
 # 3. Target 1: The Logger Logic
-add_library(PalServerLogger SHARED src/dllmain.cpp)
+add_library(PalServerLogger SHARED
+    src/dllmain.cpp
+    src/core/runtime.cpp
+    src/core/logging.cpp
+    src/hooks/console_hooks.cpp
+)
 target_link_libraries(PalServerLogger PRIVATE minhook nlohmann_json::nlohmann_json ws2_32 advapi32)
-target_include_directories(PalServerLogger PRIVATE ${minhook_SOURCE_DIR}/include)
+target_include_directories(PalServerLogger PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src ${minhook_SOURCE_DIR}/include)
 
 # 4. Target 2: The d3d9 Proxy Chain-Loader
 add_library(ProxyLoader SHARED src/loader.cpp)
